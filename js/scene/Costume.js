@@ -24,18 +24,20 @@ const R_TROUSERS = 3; // near-black high-waters
 const R_JACKET   = 4; // sequined black jacket
 const R_SHIRT    = 5; // white shirt (narrow front chest wedge)
 const R_GLOVE    = 6; // white sequined glove (right hand)
-const REGION_COUNT = 7;
+const R_FACE     = 7; // matte flesh-in-shadow face (drops the armor diffuse map)
+const REGION_COUNT = 8;
 
 // Tie-break priority when a triangle's 3 verts vote for 3 different regions.
 // Small, high-signal cues win so they never get swallowed by big regions.
 const PRIORITY = new Float32Array(REGION_COUNT);
 PRIORITY[R_SKIN]     = 0;
 PRIORITY[R_TROUSERS] = 1;
-PRIORITY[R_JACKET]   = 2;
-PRIORITY[R_LOAFERS]  = 3;
-PRIORITY[R_SHIRT]    = 4;
-PRIORITY[R_GLOVE]    = 5;
-PRIORITY[R_SOCKS]    = 6;
+PRIORITY[R_FACE]     = 2; // sits just above skin so the head reads as face, not armor
+PRIORITY[R_JACKET]   = 3;
+PRIORITY[R_LOAFERS]  = 4;
+PRIORITY[R_SHIRT]    = 5;
+PRIORITY[R_GLOVE]    = 6;
+PRIORITY[R_SOCKS]    = 7;
 
 const ASSUMED_HEIGHT_M = 1.75; // MJ ~ real-world height, for unit scaling
 
@@ -61,9 +63,11 @@ export function applyCostume(root) {
 
   // Step 2 — region-map & re-material the body mesh.
   let noiseTex = null;
+  let sparkleEnv = null;
   try {
     noiseTex = makeSparkleTexture();
-    remapBody(root, noiseTex);
+    sparkleEnv = makeSparkleEnvTexture();
+    remapBody(root, noiseTex, sparkleEnv);
   } catch (e) {
     console.warn('[Costume] body remap failed (mesh left as-is):', e && e.message);
   }
@@ -82,7 +86,7 @@ export function applyCostume(root) {
 // ---------------------------------------------------------------------------
 // Body: classify every triangle, reorder index by region, assign material array
 // ---------------------------------------------------------------------------
-function remapBody(root, noiseTex) {
+function remapBody(root, noiseTex, sparkleEnv) {
   const mesh = root.getObjectByName('vanguard_Mesh');
   if (!mesh || !mesh.isSkinnedMesh) {
     console.info('[Costume] vanguard_Mesh (skinned) not found — no body remap');
@@ -198,23 +202,35 @@ function remapBody(root, noiseTex) {
 
   const jacket = new THREE.MeshStandardMaterial({
     color: 0x0a0a0c, metalness: 0.85, roughness: 0.28, envMapIntensity: 1.5,
+    emissive: 0x1a1a22, emissiveIntensity: 0.25,
   });
   const glove = new THREE.MeshStandardMaterial({
     color: 0xffffff, metalness: 0.4, roughness: 0.35, envMapIntensity: 1.2,
   });
   if (noiseTex) {
+    // Same procedural speck noise drives roughness AND metalness on the jacket
+    // so the smooth specks read as metallic glints; also faint emissive glint.
     jacket.roughnessMap = noiseTex;
-    glove.roughnessMap = noiseTex;
+    jacket.metalnessMap = noiseTex;
+    jacket.emissiveMap  = noiseTex;
+    glove.roughnessMap  = noiseTex;
+  }
+  if (sparkleEnv) {
+    // KEY FIX: envMapIntensity above was a no-op with no envMap present. Assign
+    // a tiny procedural equirect env per-material (never scene.environment).
+    jacket.envMap = sparkleEnv;
+    glove.envMap  = sparkleEnv;
   }
 
   const mats = new Array(REGION_COUNT);
   mats[R_SKIN]     = skinMat;
   mats[R_LOAFERS]  = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, metalness: 0.1, roughness: 0.25 });
-  mats[R_SOCKS]    = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, metalness: 0.0, roughness: 0.8 });
+  mats[R_SOCKS]    = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.0, roughness: 0.65 });
   mats[R_TROUSERS] = new THREE.MeshStandardMaterial({ color: 0x101010, metalness: 0.0, roughness: 0.85 });
   mats[R_JACKET]   = jacket;
   mats[R_SHIRT]    = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, metalness: 0.0, roughness: 0.6 });
   mats[R_GLOVE]    = glove;
+  mats[R_FACE]     = new THREE.MeshStandardMaterial({ color: 0x6a4a38, metalness: 0.0, roughness: 0.9 });
 
   mesh.material = mats;
 }
@@ -243,7 +259,10 @@ function classifyVertex(name, x, y, z, sockTopY, frontSign, shirtZThresh, shirtH
     return R_JACKET;
   }
 
-  // Head, left hand, everything else -> skin (keep diffuse).
+  // Head -> matte flesh-in-shadow face (drop the armor diffuse map).
+  if (/Head$|HeadTop_End$/.test(name)) return R_FACE;
+
+  // Left hand, everything else -> skin (keep diffuse).
   return R_SKIN;
 }
 
@@ -275,19 +294,57 @@ function boneZ(boneNames, boneBindPos, re) {
 // Procedural 64x64 white-noise roughness map -> sequin sparkle under the spot.
 // ---------------------------------------------------------------------------
 function makeSparkleTexture() {
-  const size = 64;
+  const size = 128;
   const data = new Uint8Array(size * size * 4);
   for (let i = 0; i < size * size; i++) {
-    // Bimodal-ish noise: mostly rough with scattered smooth (glinty) specks.
+    // Bimodal noise: mostly rough weave, with rarer but smoother glint specks.
+    // Smooth specks are darker (v 5-25 => low roughness => sharp highlight) and
+    // scarce (~8%), so the sparkle reads as discrete sequins, not a haze.
     const r = Math.random();
-    const v = r < 0.12 ? (20 + Math.random() * 40) : (140 + Math.random() * 90);
+    const v = r < 0.08 ? (5 + Math.random() * 20) : (150 + Math.random() * 85);
     const o = i * 4;
     data[o] = v; data[o + 1] = v; data[o + 2] = v; data[o + 3] = 255;
   }
   const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(8, 8);
+  tex.repeat.set(15, 15);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// ---------------------------------------------------------------------------
+// Tiny procedural equirect env map (64x32): a bright warm streak on near-black.
+// Assigned per-material as .envMap so the jacket/glove's envMapIntensity finally
+// does something — sequins pick up a moving warm reflection under the spot.
+// NEVER assigned to scene.environment (would leak onto every material).
+// ---------------------------------------------------------------------------
+function makeSparkleEnvTexture() {
+  const w = 64, h = 32;
+  const cnv = document.createElement('canvas');
+  cnv.width = w; cnv.height = h;
+  const ctx = cnv.getContext('2d');
+  // Base: near-black theater.
+  ctx.fillStyle = '#050403';
+  ctx.fillRect(0, 0, w, h);
+  // Warm hot streak near the upper third (the spotlight glow).
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0.00, '#050403');
+  grad.addColorStop(0.28, '#3a2c18');
+  grad.addColorStop(0.40, '#fff2cc');
+  grad.addColorStop(0.52, '#3a2c18');
+  grad.addColorStop(1.00, '#050403');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  // A brighter horizontal hot spot toward the front.
+  const hs = ctx.createRadialGradient(w * 0.5, h * 0.4, 1, w * 0.5, h * 0.4, w * 0.35);
+  hs.addColorStop(0, 'rgba(255,246,220,0.9)');
+  hs.addColorStop(1, 'rgba(255,246,220,0)');
+  ctx.fillStyle = hs;
+  ctx.fillRect(0, 0, w, h);
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   return tex;
 }
@@ -327,12 +384,27 @@ function attachFedora(root) {
   top.position.y = crownH + 0.014;
   hat.add(top);
 
-  // Brim — flat ring via lathe-like RingGeometry, tilted slightly.
+  // Brim — RingGeometry with radial y-displacement for a curved fedora edge:
+  // a gentle droop across the sweep with the outer rim rolled up. Extra radial
+  // rings (3) give the curve something to bend on; still < 1k tris.
+  const brimGeo = new THREE.RingGeometry(0.09, 0.155, 32, 3);
+  const rInner = 0.09, rOuter = 0.155;
+  const bp = brimGeo.attributes.position;
+  for (let i = 0; i < bp.count; i++) {
+    const x = bp.getX(i), y = bp.getY(i);
+    const r = Math.hypot(x, y);
+    const t = Math.min(1, Math.max(0, (r - rInner) / (rOuter - rInner)));
+    // droop down mid-brim (z is height before the -PI/2 tilt), roll up at the rim.
+    const z = -0.010 * Math.sin(t * Math.PI) + 0.013 * Math.pow(t, 3);
+    bp.setZ(i, z);
+  }
+  bp.needsUpdate = true;
+  brimGeo.computeVertexNormals();
   const brim = new THREE.Mesh(
-    new THREE.RingGeometry(0.09, 0.155, 32), black,
+    brimGeo,
+    new THREE.MeshStandardMaterial({ color: 0x080808, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
   );
   brim.rotation.x = -Math.PI / 2;
-  brim.material = new THREE.MeshStandardMaterial({ color: 0x080808, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide });
   hat.add(brim);
 
   // Band — thin torus around the crown base.

@@ -11,6 +11,14 @@
   --panel-border: rgba(255, 179, 71, 0.28);
   --text: #f2e6d4;
   --text-dim: #a89476;
+  /* --- Retro '83 type + spacing scale (Phase 5 polish) --- */
+  --font-mono: "Courier New", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ls-wide: 0.26em;
+  --ls-mid: 0.12em;
+  --ls-tight: 0.06em;
+  --fs-label: 9px;
+  --fs-body: 12px;
+  --fs-readout: 18px;
   /* Scanline accent used across decks/panels/overlays. */
   --scanlines: repeating-linear-gradient(
     0deg,
@@ -30,7 +38,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: "Courier New", ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 #app { position: fixed; inset: 0; }
@@ -108,7 +116,7 @@ html, body {
     linear-gradient(180deg, var(--hp-panel-top) 0%, var(--hp-panel-bot) 100%);
   border-top: 1px solid var(--hp-border);
   box-shadow: 0 -6px 26px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(var(--amber-rgb), 0.06);
-  font-family: "Courier New", ui-monospace, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--hp-amber);
 }
 #host-panel.hidden { display: none; }
@@ -155,10 +163,23 @@ html, body {
 .hp-deckcluster { flex: 0 0 auto; }
 
 .hp-section-label {
-  font-size: 9px;
-  letter-spacing: 0.26em;
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-wide);
   text-transform: uppercase;
   color: var(--hp-amber-dim);
+}
+
+/* (16) CRT flicker — deck section labels ONLY. Subtle: felt, not seen. */
+.hp-crt { animation: hp-crt-flicker 4s steps(1, end) infinite; }
+@keyframes hp-crt-flicker {
+  0%, 100% { opacity: 1; }
+  8% { opacity: 0.92; }
+  9% { opacity: 1; }
+  46% { opacity: 1; }
+  47% { opacity: 0.94; }
+  48% { opacity: 1; }
+  72% { opacity: 0.92; }
+  73% { opacity: 1; }
 }
 
 .hp-btn-row, .hp-ab-row, .hp-deck-row { display: flex; align-items: center; gap: 8px; }
@@ -191,8 +212,8 @@ html, body {
 
 /* Seven-seg style readout. */
 .hp-readout {
-  font-size: 18px;
-  letter-spacing: 0.12em;
+  font-size: var(--fs-readout);
+  letter-spacing: var(--ls-mid);
   font-weight: bold;
   color: var(--hp-amber);
   text-shadow: 0 0 10px var(--hp-glow);
@@ -245,25 +266,44 @@ html, body {
 .hp-flag.hidden { display: none; }
 
 /* Marker chip row. */
-.hp-markers { position: relative; height: 20px; margin-top: 2px; }
+.hp-markers { position: relative; height: 22px; margin-top: 3px; }
 .hp-markers.hidden { display: none; }
 .hp-marker {
   position: absolute;
   transform: translateX(-50%);
-  top: 0;
+  top: 4px;
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 4px;
+  padding: 1px 3px;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(var(--amber-rgb), 0.3);
   border-radius: 3px;
   color: var(--hp-amber);
-  font-size: 9px;
+  font-size: var(--fs-label);
   cursor: pointer;
   white-space: nowrap;
+  transition: transform 0.1s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
-.hp-marker:hover { background: var(--hp-btn-hover); box-shadow: 0 0 8px var(--hp-glow); }
+/* 1px tick line connecting the chip down to the seek track. */
+.hp-marker::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  width: 1px;
+  height: 4px;
+  background: rgba(var(--amber-rgb), 0.35);
+  transform: translateX(-50%);
+  pointer-events: none;
+  transition: background 0.12s ease;
+}
+.hp-marker:hover {
+  background: var(--hp-btn-hover);
+  box-shadow: 0 0 8px var(--hp-glow);
+  transform: translateX(-50%) translateY(-1px);
+}
+.hp-marker:hover::after { background: var(--hp-amber); }
 .hp-marker-num { font-weight: bold; color: #14100a; background: var(--hp-amber); border-radius: 2px; padding: 0 3px; }
 .hp-marker-name { text-transform: uppercase; letter-spacing: 0.04em; }
 
@@ -311,10 +351,23 @@ html, body {
 .hp-player-name { font-size: 12px; color: var(--text); letter-spacing: 0.02em; }
 .hp-player-right { display: flex; align-items: center; gap: 6px; }
 .hp-badge {
-  font-size: 9px; letter-spacing: 0.1em; padding: 3px 6px; border-radius: 4px; font-weight: bold;
+  font-size: var(--fs-label); letter-spacing: var(--ls-mid); padding: 3px 6px; border-radius: 4px; font-weight: bold;
 }
 .hp-badge.ready { color: #9fe6a0; background: rgba(80, 200, 100, 0.14); border: 1px solid rgba(80, 200, 100, 0.4); }
 .hp-badge.loading { color: var(--hp-amber-dim); background: rgba(var(--amber-rgb), 0.06); border: 1px solid var(--hp-border); }
+
+/* (17) Badge states — shared by host-panel + lobby badges.
+   .loading = slow amber breathe; .ready = steady green glow. */
+.hp-badge.ready, .lobby-badge.ready {
+  box-shadow: 0 0 8px rgba(80, 200, 100, 0.35), inset 0 0 4px rgba(80, 200, 100, 0.15);
+}
+.hp-badge.loading, .lobby-badge.loading {
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { opacity: 0.6; box-shadow: 0 0 3px rgba(var(--amber-rgb), 0.15); }
+  50% { opacity: 1; box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.4); }
+}
 
 /* ---- Guest bar ---- */
 #guest-bar {
@@ -323,7 +376,7 @@ html, body {
   bottom: 20px;
   transform: translateX(-50%);
   z-index: 14;
-  font-family: "Courier New", ui-monospace, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 #guest-bar.hidden { display: none; }
 .gb-inner {
@@ -333,9 +386,9 @@ html, body {
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   backdrop-filter: blur(8px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(var(--amber-rgb), 0.06);
 }
-.gb-label { font-size: 9px; letter-spacing: 0.18em; color: var(--text-dim); text-transform: uppercase; }
+.gb-label { font-size: var(--fs-label); letter-spacing: 0.18em; color: var(--text-dim); text-transform: uppercase; }
 .gb-readout {
   font-size: 15px; font-weight: bold; letter-spacing: 0.08em;
   color: var(--amber); font-variant-numeric: tabular-nums;
@@ -437,7 +490,16 @@ html, body {
   color: var(--amber);
   font-weight: bold;
 }
-.lobby-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.lobby-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(var(--amber-rgb), 0.07) 0px,
+    rgba(var(--amber-rgb), 0.07) 6px,
+    transparent 6px,
+    transparent 12px);
+}
 
 .lobby-divider {
   display: flex;
@@ -474,8 +536,11 @@ html, body {
   letter-spacing: 0.34em;
   font-weight: bold;
   color: var(--amber);
-  text-shadow: 0 0 18px var(--amber-glow);
+  text-shadow: 0 0 26px var(--amber-glow), 0 0 6px var(--amber-glow);
   margin: 4px 0 22px;
+  padding: 6px 0;
+  background-image: var(--scanlines);
+  border-radius: 6px;
 }
 
 .lobby-players { list-style: none; margin: 0 0 20px; padding: 0; text-align: left; }
@@ -516,7 +581,7 @@ html, body {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 10px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(var(--amber-rgb), 0.06);
   backdrop-filter: blur(6px);
 }
 .lobby-chip.hidden { display: none; }
@@ -605,10 +670,10 @@ body[data-quality="low"] #fx-overlay { display: none; }
   border: 1px solid var(--panel-border);
   border-radius: 5px;
   padding: 4px 8px;
-  font-family: "Courier New", ui-monospace, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: bold;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-tight);
   text-transform: uppercase;
   cursor: pointer;
   outline: none;
@@ -662,8 +727,19 @@ body[data-quality="low"] #fx-overlay { display: none; }
 }
 @keyframes overlay-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 
-/* ---- Reduced motion: freeze grain + cursor ---- */
+/* ---- Reduced motion: freeze grain + cursor + all Phase-5-polish loops ---- */
 @media (prefers-reduced-motion: reduce) {
   #fx-overlay { animation: none; }
   .overlay-sysline .blink { animation: none; opacity: 1; }
+  .hp-crt { animation: none; }
+  .hp-badge.loading, .lobby-badge.loading { animation: none; opacity: 1; }
+}
+
+/* Low tier: drop the non-essential opacity loops too (they're cheap, but the
+   low preset intentionally strips motion). */
+body[data-quality="low"] .hp-crt,
+body[data-quality="low"] .hp-badge.loading,
+body[data-quality="low"] .lobby-badge.loading {
+  animation: none;
+  opacity: 1;
 }

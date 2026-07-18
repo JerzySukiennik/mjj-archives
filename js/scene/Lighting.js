@@ -43,14 +43,14 @@ export function createLighting(scene, stageAnchor, opts = {}) {
   added.push(spot, spotTarget);
 
   // ---- Very dim cool hemisphere fill (house reads dark-but-visible) ------
-  const hemi = new THREE.HemisphereLight(0x3a4a6a, 0x080608, 0.14);
+  const hemi = new THREE.HemisphereLight(0x3a4a6a, 0x120a06, 0.14);
   scene.add(hemi);
   added.push(hemi);
 
   // ---- Faint warm fill on the proscenium so the arch isn't pure black ----
   let performerFill = null;
   if (fill) {
-    const proscFill = new THREE.PointLight(0x9a6a3a, 6, 30, 2.0);
+    const proscFill = new THREE.PointLight(0xa8703a, 8, 30, 2.0);
     proscFill.position.set(0, aim.y + 9, aim.z - 2);
     proscFill.castShadow = false;
     scene.add(proscFill);
@@ -159,7 +159,7 @@ export function createLighting(scene, stageAnchor, opts = {}) {
   let prevFog = null;
   if (fog) {
     prevFog = scene.fog;
-    scene.fog = new THREE.FogExp2(0x05040a, 0.018);
+    scene.fog = new THREE.FogExp2(0x05040a, 0.016);
   }
 
   /**
