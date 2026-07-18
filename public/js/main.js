@@ -105,7 +105,11 @@ async function boot() {
       onProgress: (frac) => setProgress(0.5 + frac * 0.4),
     });
     if (performer && performer.object3d) {
-      performer.object3d.position.copy(stageAnchor.getWorldPosition(new THREE.Vector3()));
+      const stageWorldAnchor = stageAnchor.getWorldPosition(new THREE.Vector3());
+      // setAnchor composes the stored drop-to-floor offset on top of the stage
+      // anchor (fixes the Phase-1 clobber where position.copy() flattened it).
+      if (typeof performer.setAnchor === 'function') performer.setAnchor(stageWorldAnchor);
+      else performer.object3d.position.copy(stageWorldAnchor);
       scene.add(performer.object3d);
     }
   } catch (err) {
@@ -140,6 +144,16 @@ async function boot() {
     const { DirectorCamera } = await import('./DirectorCamera.js');
     directorCamera = new DirectorCamera(camera, stageAnchor);
     directorCamera.setEnabled(false);
+    // Feed the director cam the performer's live focus points (feet/chest/face).
+    if (performer && typeof directorCamera.setFocusProvider === 'function') {
+      directorCamera.setFocusProvider((k, out) => performer.getFocusPoint(k, out));
+    }
+    // Load the TV-cut camera track (fire-and-forget; loads during boot, well
+    // before Start). No-op if the manifest field is null or the method is absent.
+    if (typeof directorCamera.loadTrack === 'function') {
+      directorCamera.loadTrack(manifest.cameraTrack)
+        .catch((e) => console.warn('[main] camera track load failed:', e && e.message));
+    }
   } catch (err) {
     console.warn('[main] DirectorCamera unavailable:', err.message);
   }
