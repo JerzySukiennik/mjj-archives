@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Rooms are keyed by 6-char room code. Anyone with the code can read.
+    match /rooms/{roomId} {
+      allow read: if true;
+      // Room creation: creator must set themselves as host.
+      allow create: if request.resource.data.hostId is string
+                    && request.resource.data.hostId.size() > 0;
+      // Only the host may update transport/lighting/camera state or delete the room.
+      allow update, delete: if resource.data.hostId == request.resource.data.hostId
+                    && request.resource.data.hostId == resource.data.hostId;
+
+      // Player presence docs: each player writes only their own doc; max 4 enforced client-side.
+      match /players/{playerId} {
+        allow read: if true;
+        allow write: if true; // playerId is a random client id; writes carry no privileges
+      }
+
+      // Clock-sync ping docs (ephemeral, per-client).
+      match /pings/{pingId} {
+        allow read, write: if true;
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+.DS_Store
+Assets/
+pipeline/venv/
+pipeline/work/
+pipeline/models/
+node_modules/
