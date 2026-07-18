@@ -4,7 +4,7 @@
 // null and pass through as null (never resolved).
 
 const REQUIRED_STRINGS = ['name', 'audio', 'model', 'hall'];
-const NULLABLE_PATHS = ['motion', 'cameraTrack', 'markers'];
+const NULLABLE_PATHS = ['motion', 'cameraTrack', 'markers', 'referenceVideo'];
 
 /**
  * @param {string} manifestUrl URL (absolute or relative to document) of concert.json.
@@ -75,5 +75,6 @@ export async function loadConcert(manifestUrl) {
     motion: resolve(raw.motion),
     cameraTrack: resolve(raw.cameraTrack),
     markers: resolve(raw.markers),
+    referenceVideo: resolve(raw.referenceVideo),
   };
 }

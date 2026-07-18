@@ -45,6 +45,7 @@ function defaultTransport() {
     muted: false,
     lightingPreset: 'single-spot',
     cameraForced: false,
+    abLoop: null,
     anchor: {
       audioPositionAtAnchor: 0,
       anchorServerTime: serverTimestamp(),
@@ -82,6 +83,14 @@ export class Room {
     this._seq = 0;
     this._lastAppliedSeq = -1;
     this._sessionEnded = false;
+
+    // --- Phase 4: A-B loop (host), reset/kick/lighting tracking (guest) ---
+    this._lastAbLoop = null;      // host sticky mirror of transport.abLoop
+    this._abLoopCooldown = 0;     // host re-entrancy guard for loop seek
+    this._presence = null;        // attached via attachPresence() for tidy-up
+    this._lastResetSeq = null;    // guest: last seen resetSeatsSeq (null = unseen)
+    this._lastLightingSeen = undefined; // guest: last seen lightingPreset
+    this._kickedEmitted = false;  // guest: latch so 'kicked' fires once
 
     // --- tiny event emitter ('roomchange','transportapplied','sessionended') ---
     this._listeners = new Map();
@@ -123,6 +132,8 @@ export class Room {
             createdAt: serverTimestamp(),
             hostHeartbeat: serverTimestamp(),
             transport: defaultTransport(),
+            resetSeatsSeq: 0,
+            kicked: {},
           });
         });
         code = candidate;
@@ -213,6 +224,18 @@ export class Room {
       this._clockUnsubs.push(clock.on('statechange', republish));
       this._clockUnsubs.push(clock.on('seeked', republish));
       this._clockUnsubs.push(clock.on('ratechange', republish));
+      // A-B loop enforcement: when the playhead passes B, seek back to A. The
+      // seek fires 'seeked' -> normal anchor republish, so guests just follow.
+      this._clockUnsubs.push(clock.on('timeupdate', () => {
+        const loop = this._lastAbLoop;
+        if (!loop) return;
+        const now = Date.now();
+        if (now < this._abLoopCooldown) return; // one seek per crossing
+        if (clock.currentTime >= loop.b) {
+          this._abLoopCooldown = now + 300;
+          clock.seek(loop.a);
+        }
+      }));
     } else {
       // Guest: observe the room doc and apply transport.
       this._unsubRoom = onSnapshot(this._roomRef, (snap) => {
@@ -249,9 +272,10 @@ export class Room {
     const transport = {
       playing: this._clock.playing,
       rate: this._clock.rate,
-      muted: this._lastMuted || false,
+      muted: false, // mute is per-client local now; field kept for doc shape only
       lightingPreset: this._lastLighting || 'single-spot',
       cameraForced: this._lastCameraForced || false,
+      abLoop: this._lastAbLoop || null,
       ...extra,
       anchor: {
         audioPositionAtAnchor: this._clock.currentTime,
@@ -260,9 +284,9 @@ export class Room {
       },
     };
     // Keep local mirrors of sticky fields.
-    this._lastMuted = transport.muted;
     this._lastLighting = transport.lightingPreset;
     this._lastCameraForced = transport.cameraForced;
+    this._lastAbLoop = transport.abLoop;
     try {
       await updateDoc(this._roomRef, { transport });
     } catch (err) {
@@ -281,6 +305,29 @@ export class Room {
     }
     if (wasState !== this.state) this._emit('roomchange', data);
     this._lastHostHeartbeat = data.hostHeartbeat || null;
+
+    // --- Phase 4 guest reactions (kick / reset-seats / lighting) ---
+    // Kick: if the host flagged this player, latch + emit once.
+    if (data.kicked && data.kicked[this.playerId] && !this._kickedEmitted) {
+      this._kickedEmitted = true;
+      this._emit('kicked');
+    }
+    // Reset-to-seats: monotonic seq. Ignore the first observation at join.
+    if (typeof data.resetSeatsSeq === 'number') {
+      if (this._lastResetSeq === null) {
+        this._lastResetSeq = data.resetSeatsSeq;
+      } else if (data.resetSeatsSeq > this._lastResetSeq) {
+        this._lastResetSeq = data.resetSeatsSeq;
+        this._emit('resetseats');
+      }
+    }
+    // Lighting preset: emit on change; also emit once on first snapshot so late
+    // joiners pick up the current preset.
+    const preset = data.transport && data.transport.lightingPreset;
+    if (preset && preset !== this._lastLightingSeen) {
+      this._lastLightingSeen = preset;
+      this._emit('lightingchange', preset);
+    }
 
     const t = data.transport;
     if (!t || !t.anchor) return;
@@ -371,9 +418,10 @@ export class Room {
     const transport = {
       playing: true,
       rate: this._clock.rate,
-      muted: this._lastMuted || false,
+      muted: false,
       lightingPreset: this._lastLighting || 'single-spot',
       cameraForced: true,
+      abLoop: this._lastAbLoop || null,
       anchor: {
         audioPositionAtAnchor: this._clock.currentTime,
         anchorServerTime: serverTimestamp(),
@@ -397,6 +445,94 @@ export class Room {
     this._clock.pause();
     this._lastCameraForced = false;
     await this.setTransportField({ state: 'lobby', cameraForced: false });
+  }
+
+  // ============================================================
+  // Host-only Phase 4 controls (lighting / A-B loop / reset / kick)
+  // ============================================================
+
+  /**
+   * Host-only: set the synced lighting preset. Drives Lighting.applyPreset on
+   * guests via the 'lightingchange' event derived from transport.lightingPreset.
+   * @param {'single-spot'|'full-stage'|'blackout'} preset
+   */
+  setLightingPreset(preset) {
+    if (!this.isHost) return;
+    return this.setTransportField({ lightingPreset: preset });
+  }
+
+  /**
+   * Host-only: define the A-B loop window (seconds of audio time). Invariant
+   * 0 <= a < b <= duration; invalid input is a no-op. Sticky in the room doc;
+   * enforced host-side (see attachClock 'timeupdate').
+   * @param {number} a loop start (s)
+   * @param {number} b loop end (s)
+   */
+  setAbLoop(a, b) {
+    if (!this.isHost) return;
+    const dur = this._clock && typeof this._clock.duration === 'number'
+      ? this._clock.duration : Infinity;
+    if (!(typeof a === 'number' && typeof b === 'number')) return;
+    if (!(a >= 0 && a < b && b <= dur)) {
+      console.warn('[Room] setAbLoop rejected invalid window', a, b, 'dur', dur);
+      return;
+    }
+    this._lastAbLoop = { a, b };
+    return this._writeTransport({ abLoop: { a, b } });
+  }
+
+  /** Host-only: clear the A-B loop. */
+  clearAbLoop() {
+    if (!this.isHost) return;
+    this._lastAbLoop = null;
+    return this._writeTransport({ abLoop: null });
+  }
+
+  /**
+   * Host-only: signal all guests (and the host UI) to snap players back to
+   * their seats. Monotonic counter so repeated resets always fire; no
+   * reset-to-false write needed. increment isn't re-exported from
+   * FirebaseClient, so this is a read-modify-write.
+   */
+  async resetPlayersToSeats() {
+    if (!this.isHost) return;
+    try {
+      const snap = await getDoc(this._roomRef);
+      const cur = (snap.exists() && typeof snap.data().resetSeatsSeq === 'number')
+        ? snap.data().resetSeatsSeq : 0;
+      await updateDoc(this._roomRef, { resetSeatsSeq: cur + 1 });
+    } catch (err) {
+      console.warn('[Room] resetPlayersToSeats failed:', err && err.message);
+    }
+  }
+
+  /**
+   * Host-only: kick a player. Marks kicked.{id}=true (so the target self-exits)
+   * then best-effort deletes their player doc. playerIds are per-tab UUIDs, so
+   * this is a kick, not a ban — a kicked player can rejoin with a fresh id;
+   * acceptable for a 4-friend watch-party.
+   * @param {string} playerId
+   */
+  async kickPlayer(playerId) {
+    if (!this.isHost || !playerId || playerId === this.playerId) return;
+    try {
+      await updateDoc(this._roomRef, { ['kicked.' + playerId]: true });
+    } catch (err) {
+      console.warn('[Room] kickPlayer flag failed:', err && err.message);
+    }
+    try {
+      const playerRef = doc(this._db, 'rooms', this.code, 'players', playerId);
+      await deleteDoc(playerRef);
+    } catch (_) { /* best effort */ }
+  }
+
+  /**
+   * Attach the Presence instance (both roles) so leave() can tidy up its
+   * heartbeat + snapshot subscription (Phase-3 leak fix).
+   * @param {import('./Presence.js').Presence} presence
+   */
+  attachPresence(presence) {
+    this._presence = presence;
   }
 
   /**
@@ -466,6 +602,10 @@ export class Room {
     }
     deleteDoc(playerRef).catch(() => {});
     this._teardownTimers();
+    // Phase-3 tidy-up: kill the ClockSync auto-recalibrate timer (+ ping docs)
+    // and the Presence heartbeat + snapshot sub, which previously leaked.
+    try { this._clockSync?.stop?.(); } catch (_) {}
+    try { this._presence?.stop?.(); } catch (_) {}
     if (typeof window !== 'undefined') {
       window.removeEventListener('pagehide', this._onPageHide);
     }
@@ -487,7 +627,9 @@ export class Room {
   // ============================================================
 
   /**
-   * Subscribe to a room event: 'roomchange' | 'transportapplied' | 'sessionended'.
+   * Subscribe to a room event: 'roomchange' | 'transportapplied' |
+   * 'sessionended' | 'lightingchange' (payload: preset string) | 'resetseats'
+   * (no payload) | 'kicked' (no payload).
    * @param {string} event
    * @param {(payload:any)=>void} cb
    * @returns {() => void} unsubscribe.

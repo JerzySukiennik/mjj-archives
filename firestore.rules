@@ -7,14 +7,22 @@ service cloud.firestore {
       // Room creation: creator must set themselves as host.
       allow create: if request.resource.data.hostId is string
                     && request.resource.data.hostId.size() > 0;
-      // Only the host may update transport/lighting/camera state or delete the room.
+      // Only the host may update the room doc or delete the room. hostId must be
+      // present, unchanged, and match the existing host. This single posture
+      // covers every host-authoritative field: transport (playing/rate/muted/
+      // lightingPreset/cameraForced/anchor/abLoop), state, hostHeartbeat, and the
+      // Phase-4 additions resetSeatsSeq and the kicked.* map — no per-field carve
+      // out is needed since a valid host may write any field on their own room.
       allow update, delete: if resource.data.hostId == request.resource.data.hostId
                     && request.resource.data.hostId == resource.data.hostId;
 
-      // Player presence docs: each player writes only their own doc; max 4 enforced client-side.
+      // Player presence docs: playerId is a random per-tab id that carries no
+      // privileges, so writes are open. This intentionally also permits the host
+      // (and the stale-doc janitor) to DELETE another player's doc on kick —
+      // acceptable for an open room-code watch-party.
       match /players/{playerId} {
         allow read: if true;
-        allow write: if true; // playerId is a random client id; writes carry no privileges
+        allow write: if true; // create/update/delete — see note above
       }
 
       // Clock-sync ping docs (ephemeral, per-client).

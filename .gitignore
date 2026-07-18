@@ -4,3 +4,4 @@ pipeline/venv/
 pipeline/work/
 pipeline/models/
 node_modules/
+public/**/reference.mp4
