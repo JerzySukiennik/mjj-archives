@@ -1,0 +1,11 @@
+{
+ "markers": {
+  "intro-pose": 2.83,
+  "first-beat": 89.37,
+  "spin-1": 181.77,
+  "moonwalk": 220.3,
+  "toe-stand": 242.83,
+  "finale": 289.23
+ },
+ "note": "derived from pose motion energy; moonwalk/toe-stand cross-checked vs known ~3:38 hint"
+}

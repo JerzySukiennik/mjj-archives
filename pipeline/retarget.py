@@ -62,6 +62,38 @@ def main():
 
     GOOD = conf > 0.5
 
+    # ---- temporal outlier rejection ----
+    # Reject "good" frames whose core world landmarks jump implausibly vs the last
+    # accepted frame (wide/crowd shots where MediaPipe grabs a wrong or mangled body).
+    CORE = [0,11,12,23,24,25,26,27,28]
+    last = None
+    n_rej = 0
+    for i in range(F):
+        if not GOOD[i]:
+            continue
+        if last is not None:
+            dt = (i - last) / fps
+            d = float(np.mean(np.linalg.norm(world[i][CORE] - world[last][CORE], axis=1)))
+            # allow ~3 m/s mean landmark speed, floor of 0.45 m for cut jumps
+            if d > max(0.45, 3.0 * dt):
+                GOOD[i] = False
+                n_rej += 1
+                continue
+        last = i
+    # second pass: kill short good islands (< 8 frames ~ 0.27s) — usually spurious
+    # detections inside wide/crowd shots that would poison gap blending.
+    i = 0
+    while i < F:
+        if GOOD[i]:
+            j = i
+            while j < F and GOOD[j]: j += 1
+            if (j - i) < 8:
+                GOOD[i:j] = False
+            i = j
+        else:
+            i += 1
+    print(f"outlier rejection: removed {n_rej} jump frames; good now {GOOD.mean()*100:.1f}%")
+
     # ---- per-frame retarget ----
     quats = {b: np.zeros((F,4), np.float32) for b in OUTPUT_BONES}
     hips_pos = np.zeros((F,3), np.float32)
@@ -146,7 +178,15 @@ def main():
         if prv==nxt:
             t=0.0
         else:
-            t=(i-prv)/(nxt-prv)
+            gap = nxt - prv
+            if gap <= int(0.5*fps):
+                t=(i-prv)/gap            # short gap: straight interpolation
+            else:
+                # long gap: hold last good pose, blend to next only in final 0.5s
+                blend = int(0.5*fps)
+                k = i - (nxt - blend)
+                t = 0.0 if k < 0 else k/blend
+                t = t*t*(3-2*t)          # smoothstep
         for bone in OUTPUT_BONES:
             quats[bone][i] = Q.slerp(quats[bone][prv], quats[bone][nxt], t)
         hips_quat[i] = Q.slerp(hips_quat[prv], hips_quat[nxt], t)

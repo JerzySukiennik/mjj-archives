@@ -3,7 +3,7 @@
   "name": "Billie Jean — Motown 25 (1983)",
   "audio": "billiejean.m4a",
   "model": "mj.glb",
-  "motion": null,
+  "motion": "billiejean.motion.json",
   "cameraTrack": null,
   "markers": "markers.json",
   "referenceVideo": "reference.mp4",
