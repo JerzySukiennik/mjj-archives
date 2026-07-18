@@ -41,9 +41,12 @@ export class MotionPlayer {
     this._hipsPos = null;
     this._hipsBindLocal = new THREE.Vector3();
     this._posScale = 1;
-    this._clampX = 2.5;
-    this._clampZmin = -1.5;
-    this._clampZmax = 2.0;
+    // Safety-net bounds in BAKED units (applied before posScale). retarget.py
+    // bakes stage lateral (X) and grounding-vertical (Z) at ~1/(0.01*posScale)
+    // magnitude, so these must be wide enough not to clip real travel/grounding.
+    this._clampX = 500;
+    this._clampZmin = -120;
+    this._clampZmax = 40;
   }
 
   // --------------------------------------------------------------------------

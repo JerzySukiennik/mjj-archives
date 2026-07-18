@@ -10,6 +10,36 @@ import numpy as np
 from scipy.signal import savgol_filter
 import qutil as Q
 
+
+# ---- yaw / grounding helpers -------------------------------------------------
+def quat_forward_yaw(q):
+    """Heading (radians) of a quaternion: yaw of its rotated +Z axis in the XZ plane."""
+    x, y, z, w = q
+    # rotate (0,0,1) by q -> forward vector
+    fx = 2 * (x * z + w * y)
+    fz = 1 - 2 * (x * x + y * y)
+    return np.arctan2(fx, fz)
+
+def axis_y_quat(angle):
+    """Quaternion (xyzw) for a rotation of `angle` rad about the +Y (world up) axis."""
+    return np.array([0.0, np.sin(angle / 2.0), 0.0, np.cos(angle / 2.0)])
+
+def hampel(x, win=7, n_sig=3.0):
+    """Hampel filter: replace outliers (|x-median|>n_sig*1.4826*MAD) by the local median.
+    Returns filtered copy + boolean mask of replaced samples."""
+    x = x.astype(float).copy()
+    n = len(x); out = x.copy(); mask = np.zeros(n, bool)
+    k = win // 2
+    for i in range(n):
+        a = max(0, i - k); b = min(n, i + k + 1)
+        seg = x[a:b]
+        med = np.median(seg)
+        mad = np.median(np.abs(seg - med))
+        sigma = 1.4826 * mad
+        if sigma > 1e-9 and abs(x[i] - med) > n_sig * sigma:
+            out[i] = med; mask[i] = True
+    return out, mask
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORK = os.path.join(ROOT, "pipeline", "work")
 OUTDIR = os.path.join(ROOT, "public", "concerts", "motown25-billiejean")
@@ -98,6 +128,7 @@ def main():
     quats = {b: np.zeros((F,4), np.float32) for b in OUTPUT_BONES}
     hips_pos = np.zeros((F,3), np.float32)
     hips_quat = np.zeros((F,4), np.float32)
+    hips_global = np.zeros((F,4), np.float32)   # world-space hips orientation (pre local-convert)
 
     # rest torso reference
     r_hipR = restPos["mixamorig:RightUpLeg"]; r_hipL = restPos["mixamorig:LeftUpLeg"]
@@ -118,6 +149,7 @@ def main():
         meas_up = shMid - hipMid
         Ralign = Q.frame_align(rest_right, rest_up, meas_right, meas_up)
         Ghip = Q.qmul(Ralign, restQuat["mixamorig:Hips"])
+        hips_global[i] = Ghip                               # store world hips; local convert later
         hips_quat[i] = Q.qmul(Q.qconj(hipsParentQ), Ghip)   # local = inv(parentRest)*Ghip
 
         Gmeas = {"mixamorig:Hips": Ghip}
@@ -190,32 +222,49 @@ def main():
         for bone in OUTPUT_BONES:
             quats[bone][i] = Q.slerp(quats[bone][prv], quats[bone][nxt], t)
         hips_quat[i] = Q.slerp(hips_quat[prv], hips_quat[nxt], t)
+        hips_global[i] = Q.slerp(hips_global[prv], hips_global[nxt], t)
         hips_pos[i,0] = hips_pos[prv,0]*(1-t)+hips_pos[nxt,0]*t
         hips_pos[i,2] = hips_pos[prv,2]*(1-t)+hips_pos[nxt,2]*t
 
-    # ---- resolve translation from temp stores ----
-    legSpanArr = hips_pos[:,0].copy()
+    # keep the raw temp stores (legSpan in [,0], normalized hip-x in [,2])
     nxArr = hips_pos[:,2].copy()
-    legRef = np.median(legSpanArr[GOOD]) if GOOD.any() else legSpanArr.mean()
-    # smooth lateral strongly
+
     def smooth(a, w, poly=2):
         w = min(w, len(a) - (1-len(a)%2))
         if w<5 or w%2==0: w=max(5,(w//2)*2+1)
         if w>=len(a): return a
         return savgol_filter(a, w, poly)
-    lat = smooth(nxArr, 121)            # ~4s window, very smooth
-    lat = (lat-np.median(lat))*3.0      # map normalized-x drift to ~meters (stage)
-    lat = np.clip(lat, -2.0, 2.0)
-    bob = smooth(legSpanArr, 15)
-    yy = restY + np.clip((bob-legRef), -0.25, 0.15)
-    hips_pos[:,0] = lat
-    hips_pos[:,1] = yy
-    hips_pos[:,2] = 0.0
+
+    # =====================================================================
+    # DEFECT 3 + 1 — hips YAW: enforce continuity (kill spin-flip outliers),
+    # then bake the global 180 deg facing correction (+Z toward audience).
+    # Yaw is about world +Y, so this is independent of body tilt & grounding.
+    # =====================================================================
+    yaw_raw = np.array([quat_forward_yaw(hips_global[i]) for i in range(F)])
+    yaw_un  = np.unwrap(yaw_raw)
+    if F >= 3:
+        rate = np.diff(yaw_un)                                  # rad/frame
+        # hampel on the yaw-RATE: a single-frame body flip is a spike whose
+        # local median is ~0 -> replaced; a genuine sustained spin (e.g. the
+        # real turn near 181.8 s, ~20 deg/frame) keeps a high local median ->
+        # untouched.
+        rate_f, _ = hampel(rate, win=9, n_sig=3.0)
+        # hard cap: real dance never exceeds ~120 deg/frame; anything above is
+        # an interpolation/low-confidence artifact -> clamp (slerp-through).
+        cap = np.radians(120.0)
+        rate_f = np.clip(rate_f, -cap, cap)
+        yaw_fixed = np.concatenate([[yaw_un[0]], yaw_un[0] + np.cumsum(rate_f)])
+    else:
+        yaw_fixed = yaw_un
+    YAW_OFFSET = np.pi                                          # 180 deg: face +Z
+    for i in range(F):
+        corr = axis_y_quat((yaw_fixed[i] - yaw_raw[i]) + YAW_OFFSET)
+        hips_global[i] = Q.qmul(corr, hips_global[i])
+        hips_quat[i]   = Q.qmul(Q.qconj(hipsParentQ), hips_global[i])   # world -> local
 
     # ---- light Savitzky-Golay on quats (win 7, poly 2) + renormalize ----
     def filt_quat(arr):
         out = arr.copy()
-        # enforce hemisphere continuity first
         for i in range(1,F):
             if np.dot(out[i], out[i-1]) < 0:
                 out[i] = -out[i]
@@ -227,8 +276,71 @@ def main():
     for bone in OUTPUT_BONES:
         quats[bone] = filt_quat(quats[bone])
     hips_quat = filt_quat(hips_quat)
-    for c in range(3):
-        if F>=9: hips_pos[:,c] = savgol_filter(hips_pos[:,c], 7, 2)
+
+    # =====================================================================
+    # DEFECT 2 — GROUNDING. FK the FINAL pose per frame (same convention as
+    # validate.py) and drop the hips so the lowest foot joint touches the
+    # floor. Runtime maps baked-Z -> world vertical at 0.01*posScale m/unit,
+    # and rest hips sit restY above the stage, so:
+    #     footWorldY = objY + restY + 0.01*s*z_b + fRel   (fRel = foot-below-hips, m)
+    #     -> z_b = -(restY + fRel) / (0.01*s)   to put the lowest foot on the floor.
+    # =====================================================================
+    bindT = {b: np.array(nodes[b]["localTranslation"], float) for b in nodes}
+    hipsParentP = np.array(skel["hipsParentWorldPos"])
+    fk_order = []
+    def _visit(b):
+        if b in fk_order: return
+        p = parentName[b]
+        if p in nodes: _visit(p)
+        fk_order.append(b)
+    for b in nodes: _visit(b)
+    def _qmat(q):
+        x,y,z,w=q; n=(x*x+y*y+z*z+w*w)**0.5 or 1.0; x,y,z,w=x/n,y/n,z/n,w/n
+        return np.array([[1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w)],
+                         [2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w)],
+                         [2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y)]])
+    def _M(t,q):
+        m=np.eye(4); m[:3,:3]=_qmat(q); m[:3,3]=t; return m
+    FEET = ["mixamorig:LeftFoot","mixamorig:LeftToeBase",
+            "mixamorig:RightFoot","mixamorig:RightToeBase"]
+    def local_rot(b, i):
+        if b == "mixamorig:Hips": return hips_quat[i]
+        if b in quats:             return quats[b][i]
+        return localBind[b]
+    root = _M(hipsParentP, hipsParentQ)
+    fRel = np.zeros(F)                     # metres, lowest foot joint below the hips
+    for i in range(F):
+        W={}
+        for b in fk_order:
+            lp = np.zeros(3) if b=="mixamorig:Hips" else bindT[b]   # hips at origin: measure shape only
+            loc = _M(lp, local_rot(b,i))
+            W[b] = root@loc if b=="mixamorig:Hips" else W[parentName[b]]@loc
+        hy = W["mixamorig:Hips"][1,3]
+        fmin = min(W[b][1,3] for b in FEET)
+        fRel[i] = (fmin - hy) * 0.01       # native cm -> metres
+    posScale = float(nodes["mixamorig:Hips"]["localTranslation"][1] / restY)  # bindY/restY
+    z_b = -(restY + fRel) / (0.01 * posScale)
+    z_b = smooth(z_b, 9)                    # light: kill jitter, keep real crouch/toe-stand
+    # clamp hips vertical excursion to a physical range (rest grounding is ~z0);
+    # blocks a bad-frame pose from slamming the hips through the floor.
+    z0 = float(np.median(z_b))
+    z_b = np.clip(z_b, z0 - 0.55/(0.01*posScale), z0 + 0.30/(0.01*posScale))
+
+    # =====================================================================
+    # DEFECT 4 — LATERAL STAGE TRAVEL from the normalized hip-x trajectory.
+    # Moderate smoothing (keeps walks/moonwalk), map to metres, clip to stage.
+    # After the 180 facing flip the lateral sense is mirrored, so negate.
+    # =====================================================================
+    lat = smooth(nxArr, 21)                          # ~0.7 s: responsive, denoised
+    lat = -(lat - np.median(lat)) * 12.0             # normalized drift -> metres (mirror for 180)
+    lat = np.clip(lat, -4.0, 4.0)                    # stage half-width ~4 m
+    x_b = lat / (0.01 * posScale)                    # metres -> baked units
+
+    hips_pos[:,0] = x_b
+    hips_pos[:,1] = restY                             # depth channel: hold rest (drives posScale)
+    hips_pos[:,2] = z_b
+    if F>=9:
+        for c in range(3): hips_pos[:,c] = savgol_filter(hips_pos[:,c], 7, 2)
 
     # ---- unusable spans (conf<0.5 contiguous > 0.5s) ----
     spans=[]

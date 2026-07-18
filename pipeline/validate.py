@@ -73,7 +73,7 @@ def fk(i):
 
 def main():
     cap=cv2.VideoCapture(VIDEO)
-    times=[8,88,150,markers_t("spin-1"),markers_t("moonwalk"),markers_t("toe-stand"),250,290]
+    times=[5,181,220,242]
     for t in times:
         i=int(round(t*fps));  i=max(0,min(F-1,i))
         pos=fk(i)
