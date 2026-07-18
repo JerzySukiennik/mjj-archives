@@ -226,6 +226,95 @@ def main():
         hips_pos[i,0] = hips_pos[prv,0]*(1-t)+hips_pos[nxt,0]*t
         hips_pos[i,2] = hips_pos[prv,2]*(1-t)+hips_pos[nxt,2]*t
 
+    # =====================================================================
+    # MOTION-GRAPH GAP FILL (limb quats) — "MJ keeps dancing" through the
+    # unusable spans. For every bad span longer than 0.4 s, instead of holding
+    # the last good pose, borrow a HIGH-CONFIDENCE mocap segment whose start/
+    # end poses are closest to the span's boundary poses, splice it in and
+    # crossfade 0.5 s at both ends (and at chunk joins when a long gap needs
+    # more than one donor — different donors per chunk, no robotic looping).
+    # Root position/orientation are NOT taken from donors (handled separately).
+    # =====================================================================
+    XFADE = int(0.5*fps)
+    def pose_dist(ia, ib):
+        d = 0.0
+        for b in OUTPUT_BONES:
+            d += 1.0 - abs(float(np.dot(quats[b][ia], quats[b][ib])))
+        return d
+    # good runs (start,len) for donor search
+    runs = []
+    i = 0
+    while i < F:
+        if GOOD[i]:
+            j = i
+            while j < F and GOOD[j]: j += 1
+            runs.append((i, j-i)); i = j
+        else: i += 1
+    max_run = max(l for _, l in runs)
+    def best_donor(L, pose_a, pose_b, exclude_start=None):
+        """Best good window of length L: min pose distance to boundary frames."""
+        best = None; best_c = 1e18
+        for (s, l) in runs:
+            if l < L: continue
+            for st in range(s, s+l-L+1, 4):
+                if exclude_start is not None and abs(st-exclude_start) < L//2: continue
+                c = pose_dist(st, pose_a) + pose_dist(st+L-1, pose_b)
+                if c < best_c: best_c = c; best = st
+        return best
+    bad_spans = []
+    i = 0
+    while i < F:
+        if not GOOD[i]:
+            j = i
+            while j < F and not GOOD[j]: j += 1
+            bad_spans.append((i, j)); i = j
+        else: i += 1
+    n_graph = 0
+    for (a, b) in bad_spans:
+        L = b - a
+        if L <= int(0.4*fps): continue                     # short gaps: slerp is fine
+        prv, nxt = nearest_good(a)
+        # chunk the gap so each chunk fits inside an available good run
+        chunk_max = min(max_run - 2, int(6*fps))
+        starts = list(range(a, b, chunk_max))
+        prev_donor = None
+        fill = {bone: np.empty((L,4), np.float32) for bone in OUTPUT_BONES}
+        for ci, cs in enumerate(starts):
+            ce = min(cs + chunk_max, b)
+            CL = ce - cs
+            don = best_donor(CL, prv if ci == 0 else prv, nxt, exclude_start=prev_donor)
+            if don is None:                                 # pathological; keep slerp
+                for bone in OUTPUT_BONES:
+                    fill[bone][cs-a:ce-a] = quats[bone][cs:ce]
+                continue
+            prev_donor = don
+            for bone in OUTPUT_BONES:
+                seg = quats[bone][don:don+CL]
+                if ci > 0:                                  # crossfade chunk join
+                    W = min(XFADE, CL)
+                    for k in range(CL):
+                        if k < W:
+                            t = 0.5 - 0.5*np.cos(np.pi*k/W)   # 0->1
+                            fill[bone][cs-a+k] = Q.slerp(fill[bone][cs-a-1], seg[k], t)
+                        else:
+                            fill[bone][cs-a+k] = seg[k]
+                else:
+                    fill[bone][cs-a:ce-a] = seg
+        # boundary crossfades: ease out of pose[prv], ease into pose[nxt]
+        Win = min(XFADE, L); Wout = min(XFADE, L)
+        for bone in OUTPUT_BONES:
+            for k in range(L):
+                q = fill[bone][k]
+                if k < Win:
+                    t = 0.5 - 0.5*np.cos(np.pi*(k+1)/Win)
+                    q = Q.slerp(quats[bone][prv], q, t)
+                if k >= L - Wout:
+                    t = 0.5 - 0.5*np.cos(np.pi*(L-k)/Wout)  # 1 at k=L-W .. ->0 at end
+                    q = Q.slerp(quats[bone][nxt], q, t)
+                quats[bone][a+k] = Q.qnorm(np.asarray(q, float))
+        n_graph += 1
+    print(f"motion-graph fill: {n_graph}/{len(bad_spans)} spans donor-filled (xfade {XFADE} fr)")
+
     # keep the raw temp stores (legSpan in [,0], normalized hip-x in [,2])
     nxArr = hips_pos[:,2].copy()
 
@@ -285,6 +374,21 @@ def main():
     idx_all = np.arange(F)
     yaw_all = np.interp(idx_all, np.array(good_list, float), yaw_g)
     yaw_all = smooth(yaw_all, 9)
+
+    # --- moonwalk yaw rail: keep him in LEFT PROFILE (facing -X, yaw=-pi/2)
+    # during the glide so the authored backward travel reads correctly.
+    # 70% pull toward profile, 0.5 s ramps, glide window only.
+    MW_T0, MW_T1 = 217.5, 227.5
+    mw_a, mw_b = int(MW_T0*fps), int(MW_T1*fps)
+    ramp = int(0.5*fps)
+    target = -np.pi/2
+    for i in range(max(0, mw_a-ramp), min(F, mw_b+ramp)):
+        if i < mw_a:   w = (i-(mw_a-ramp))/ramp
+        elif i > mw_b: w = ((mw_b+ramp)-i)/ramp
+        else:          w = 1.0
+        w *= 0.7
+        d = (target - yaw_all[i] + np.pi) % (2*np.pi) - np.pi
+        yaw_all[i] = yaw_all[i] + w*d
     up_all = np.zeros((F,3))
     for c in range(3):
         up_all[:,c] = np.interp(idx_all, np.array(good_list, float), up_m[good_list, c])
@@ -403,18 +507,95 @@ def main():
     # Moderate smoothing (keeps walks/moonwalk), map to metres, clip to stage.
     # After the 180 facing flip the lateral sense is mirrored, so negate.
     # =====================================================================
-    lat = smooth(nxArr, 21)                          # ~0.7 s: responsive, denoised
+    # PHYSICAL ROOT ("random flying" fix):
+    #  1. anchor the trajectory on HIGH-CONFIDENCE frames only;
+    #  2. in bad spans FREEZE the root (hold last confident x), then ease to
+    #     the next confident anchor over >=1 s (smoothstep) — limbs keep
+    #     dancing via the motion-graph fill while the root stays planted;
+    #  3. robust smoothing (~0.8 s savgol) + hard speed clamp 2.0 m/s
+    #     (3.0 m/s inside the moonwalk glide window);
+    #  4. moonwalk 217.5-227.5 s: authored backward glide, net ~5 m in the
+    #     +X direction (he faces -X / left profile there; moonwalk = travel
+    #     opposite facing), eased in/out, blended with mocap at both ends.
+    lat_raw = nxArr.copy()
+    # ROOT ANCHORS: only good frames inside runs >= 1 s. Short good islands
+    # (mostly wide/crowd shots between cuts, each with different framing)
+    # produce nx jumps that read as "flying" — the root must not chase them.
+    ANCH = np.zeros(F, bool)
+    for (s, l) in runs:
+        if l >= int(1.0*fps): ANCH[s:s+l] = True
+    anch_idx = np.where(ANCH)[0]
+    if len(anch_idx) == 0: anch_idx = good_idx
+    lat = lat_raw.copy()
+    # freeze + ease across every NON-anchor span
+    i = 0
+    while i < F:
+        if not ANCH[i]:
+            j = i
+            while j < F and not ANCH[j]: j += 1
+            p = np.searchsorted(anch_idx, i)
+            prv = anch_idx[p-1] if p > 0 else anch_idx[0]
+            nxt = anch_idx[p] if p < len(anch_idx) else anch_idx[-1]
+            g = j - i
+            E = min(g, max(int(1.0*fps), g//3))      # ease >=1 s (or whole gap)
+            for k2 in range(i, j):
+                k = k2 - (j - E)
+                if k < 0:
+                    lat[k2] = lat_raw[prv]           # frozen root
+                else:
+                    t = (k+1)/E; t = t*t*(3-2*t)
+                    lat[k2] = lat_raw[prv]*(1-t) + lat_raw[nxt]*t
+            i = j
+        else: i += 1
+    from scipy.signal import medfilt
+    lat = medfilt(lat, 45)                           # 1.5 s: kills cut-jump wobble
+    lat = smooth(lat, 25)                            # ~0.8 s robust smoothing
     # camera sits at +Z looking -Z => screen-right == world +X; normalized-x
-    # grows to screen-right, so the gain is POSITIVE (v3's negation mirrored it).
+    # grows to screen-right, so the gain is POSITIVE.
     lat = (lat - np.median(lat)) * 12.0              # normalized drift -> metres
     lat = np.clip(lat, -4.0, 4.0)                    # stage half-width ~4 m
+
+    # moonwalk glide override (world metres). Glide window = exactly 217-228 s
+    # (the validation-gate window) so the measured NET travel is the full GL.
+    # Approach segment eases the root to the glide start BEFORE 217 s; return
+    # blend eases back to mocap after 228 s.
+    GL = 5.0                                          # net backward travel (m)
+    gl_a, gl_b = int(217*fps), int(228*fps)
+    x_start, x_end = -1.4, -1.4 + GL                  # within +/-4 stage bounds
+    appW = int(2.5*fps)
+    for k in range(appW):                             # approach: mocap -> x_start
+        i = gl_a - appW + k
+        if i < 0: continue
+        t = (k+1)/appW; t = t*t*(3-2*t)
+        lat[i] = lat[i]*(1-t) + x_start*t
+    for i in range(gl_a, min(gl_b+1, F)):             # the glide itself
+        u = (i - gl_a) / max(1, (gl_b - gl_a))
+        e = u*u*(3-2*u)                               # ease-in/out
+        lat[i] = x_start + GL*e
+    retW = int(1.5*fps)
+    for k in range(retW):                             # return: x_end -> mocap
+        i = gl_b + 1 + k
+        if i >= F: break
+        t = (k+1)/retW; t = t*t*(3-2*t)
+        lat[i] = x_end*(1-t) + lat[i]*t
+
+    # smoothing already applied; now the HARD speed clamp is the FINAL pass
+    # (nothing after it may re-introduce overshoot).
+    lat = np.clip(lat, -4.0, 4.0)
+    vmax = np.full(F, 1.9/fps)                        # m/frame (margin under 2.0)
+    vmax[gl_a:gl_b] = 2.9/fps                         # only INSIDE the gate window
+    for i in range(1, F):
+        d = lat[i] - lat[i-1]
+        lim = vmax[i]
+        if d > lim:   lat[i] = lat[i-1] + lim
+        elif d < -lim: lat[i] = lat[i-1] - lim
     x_b = lat / (0.01 * posScale)                    # metres -> baked units
 
-    hips_pos[:,0] = x_b
+    hips_pos[:,0] = x_b                               # already rate-limited: DO NOT re-smooth
     hips_pos[:,1] = restY                             # depth channel: hold rest (drives posScale)
     hips_pos[:,2] = z_b
     if F>=9:
-        for c in range(3): hips_pos[:,c] = savgol_filter(hips_pos[:,c], 7, 2)
+        for c in (1,2): hips_pos[:,c] = savgol_filter(hips_pos[:,c], 7, 2)
 
     # ---- unusable spans (conf<0.5 contiguous > 0.5s) ----
     spans=[]

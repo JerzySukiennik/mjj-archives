@@ -56,7 +56,7 @@ export class HostPanel {
       <div class="hp-deck">
         <!-- LEFT: TRANSPORT -->
         <section class="hp-section hp-transport">
-          <div class="hp-section-label">Transport</div>
+          <div class="hp-section-label hp-crt">Transport</div>
           <div class="hp-btn-row">
             <button id="hp-stop" class="hp-btn" title="Stop (return to lobby)">■ STOP</button>
             <button id="hp-back10" class="hp-btn" title="Back 10s (←)">−10s</button>
@@ -68,7 +68,7 @@ export class HostPanel {
 
         <!-- CENTER: TAPE -->
         <section class="hp-section hp-tape">
-          <div class="hp-section-label">Tape</div>
+          <div class="hp-section-label hp-crt">Tape</div>
           <div class="hp-readout"><span id="hp-time-cur">0:00</span> / <span id="hp-time-tot">0:00</span></div>
           <div class="hp-track-wrap">
             <div id="hp-flag-a" class="hp-flag hp-flag-a hidden" title="Loop A">A</div>
@@ -85,7 +85,7 @@ export class HostPanel {
 
         <!-- RIGHT: DECK -->
         <section class="hp-section hp-deckcluster">
-          <div class="hp-section-label">Deck</div>
+          <div class="hp-section-label hp-crt">Deck</div>
           <div class="hp-deck-row">
             <div class="hp-stepper">
               <button id="hp-tempo-down" class="hp-btn hp-btn-sm" title="Tempo down (-)">−</button>

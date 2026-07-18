@@ -12,6 +12,7 @@ const SYNC_INTERVAL_MS = 250;
 const DRIFT_THRESHOLD_S = 0.1;
 const STYLE_ID = 'compare-mode-style';
 
+// Colours mirror css/ui.css deck tokens (--amber #ffb347 / --hp-border rgba).
 const CSS = `
 .cmp-panel {
   position: fixed;
@@ -22,37 +23,64 @@ const CSS = `
   z-index: 40;
   display: none;
   flex-direction: column;
-  background: #0a0a0a;
-  border-left: 1px solid #ffb000;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.6);
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  background: linear-gradient(180deg, #16130f 0%, #0a0908 100%);
+  border-left: 1px solid rgba(255, 179, 71, 0.30);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.6), inset 1px 0 0 rgba(255, 179, 71, 0.06);
+  font-family: "Courier New", ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
 .cmp-panel.cmp-open { display: flex; }
 .cmp-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
-  background: #141414;
-  border-bottom: 1px solid #6a4a00;
-  color: #ffb000;
+  gap: 10px;
+  padding: 7px 12px;
+  background:
+    repeating-linear-gradient(0deg,
+      rgba(255, 179, 71, 0.04) 0px, rgba(255, 179, 71, 0.04) 1px,
+      transparent 1px, transparent 3px),
+    linear-gradient(180deg, #262421 0%, #16130f 100%);
+  border-bottom: 1px solid rgba(255, 179, 71, 0.30);
+  color: #ffb347;
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-shadow: 0 0 6px rgba(255, 176, 0, 0.4);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 0 6px rgba(255, 179, 71, 0.35);
   user-select: none;
+}
+/* 'ARCHIVE' tape-label chip pinned to the header corner. */
+.cmp-header::before {
+  content: "REC · ARCHIVE";
+  order: -1;
+  padding: 2px 7px;
+  border: 1px solid #c8863b;
+  border-radius: 3px;
+  background: rgba(255, 179, 71, 0.05);
+  color: #c8863b;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.24em;
+  font-variant: small-caps;
+  text-shadow: none;
+  white-space: nowrap;
 }
 .cmp-close {
   cursor: pointer;
-  background: transparent;
-  border: 1px solid #6a4a00;
-  color: #ffb000;
+  background: #1c1a16;
+  border: 1px solid rgba(255, 179, 71, 0.30);
+  border-radius: 4px;
+  color: #ffb347;
   font-family: inherit;
   font-size: 12px;
   line-height: 1;
-  padding: 2px 8px;
+  padding: 3px 9px;
+  box-shadow: inset 0 1px 0 rgba(255, 179, 71, 0.08);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
 }
-.cmp-close:hover { background: #2a1e00; }
+.cmp-close:hover { background: #2a2620; box-shadow: 0 0 10px rgba(255, 179, 71, 0.35); }
 .cmp-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -61,6 +89,14 @@ const CSS = `
   background: #000;
   overflow: hidden;
 }
+/* Subtle inner vignette on the video/message well for depth. */
+.cmp-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.7);
+}
 .cmp-body video {
   width: 100%;
   height: 100%;
@@ -68,11 +104,14 @@ const CSS = `
   background: #000;
 }
 .cmp-message {
-  color: #cc9a3a;
+  position: relative;
+  z-index: 1;
+  color: #c8863b;
   font-size: 13px;
   padding: 24px;
   text-align: center;
   line-height: 1.5;
+  letter-spacing: 0.06em;
 }
 `;
 
