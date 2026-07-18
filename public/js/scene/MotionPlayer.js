@@ -54,7 +54,10 @@ export class MotionPlayer {
   // every bone track to Float32Array and drop the parsed JS arrays.
   // --------------------------------------------------------------------------
   static async load(url) {
-    const res = await fetch(url, { cache: 'force-cache' });
+    // Version the URL so a deploy (MJJ_V bump) always busts any cached copy.
+    const v = (typeof window !== 'undefined' && window.MJJ_V) ? window.MJJ_V : '0';
+    const versioned = url + (url.includes('?') ? '&' : '?') + 'v=' + v;
+    const res = await fetch(versioned);
     if (!res.ok) throw new Error(`motion fetch failed: HTTP ${res.status} for ${url}`);
     const json = await res.json(); // ~100-300ms one-shot parse at 5MB; acceptable.
 
