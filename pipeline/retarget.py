@@ -236,31 +236,103 @@ def main():
         return savgol_filter(a, w, poly)
 
     # =====================================================================
-    # DEFECT 3 + 1 — hips YAW: enforce continuity (kill spin-flip outliers),
-    # then bake the global 180 deg facing correction (+Z toward audience).
-    # Yaw is about world +Y, so this is independent of body tilt & grounding.
+    # DEFECT 1 + 3 — hips ORIENTATION rebuilt from landmark geometry.
+    #
+    # Facing (yaw) comes from the measured body-forward = cross(hipRight, up)
+    # per frame — NOT from an integrated yaw-rate (v3's cumsum drifted, which
+    # left long sections facing -Z). Verified against extracted video frames:
+    # at t=110/155/250 (frontal) measured fz ~ +0.9; at t=222 (moonwalk, left
+    # profile) measured fx ~ -0.93. Known limitation: when MJ genuinely turns
+    # his BACK to the camera (e.g. ~95 s) MediaPipe mirror-flips and reports a
+    # frontal pose — undetectable here (face-landmark visibility is ~1.0
+    # everywhere), so back-facing spans render as front-facing.
+    #
+    # Continuity: shortest-path unwrap across good frames + hampel on the yaw
+    # signal (kills single-frame flips, preserves genuine sustained spins like
+    # 181.8 s), then interpolation over the gap frames. No cumsum => no drift.
+    #
+    # DEFECT 2 (new) — tilt soft-clamp: hips pitch/roll limited to a plausible
+    # upright band (35 deg, tanh soft) so bad mocap spans (t~12 s stumble,
+    # t~209 s horizontal body) can never put the model on the floor, while
+    # moderate genuine leans survive.
     # =====================================================================
-    yaw_raw = np.array([quat_forward_yaw(hips_global[i]) for i in range(F)])
-    yaw_un  = np.unwrap(yaw_raw)
-    if F >= 3:
-        rate = np.diff(yaw_un)                                  # rad/frame
-        # hampel on the yaw-RATE: a single-frame body flip is a spike whose
-        # local median is ~0 -> replaced; a genuine sustained spin (e.g. the
-        # real turn near 181.8 s, ~20 deg/frame) keeps a high local median ->
-        # untouched.
-        rate_f, _ = hampel(rate, win=9, n_sig=3.0)
-        # hard cap: real dance never exceeds ~120 deg/frame; anything above is
-        # an interpolation/low-confidence artifact -> clamp (slerp-through).
-        cap = np.radians(120.0)
-        rate_f = np.clip(rate_f, -cap, cap)
-        yaw_fixed = np.concatenate([[yaw_un[0]], yaw_un[0] + np.cumsum(rate_f)])
-    else:
-        yaw_fixed = yaw_un
-    YAW_OFFSET = np.pi                                          # 180 deg: face +Z
+    # measured up/forward per frame in model space (vectorized C())
+    Pm = np.stack([-world[...,0], -world[...,1], world[...,2]], axis=-1)  # (F,33,3)
+    up_m  = 0.5*(Pm[:,L_SH]+Pm[:,R_SH]) - 0.5*(Pm[:,L_HIP]+Pm[:,R_HIP])
+    rgt_m = Pm[:,R_HIP] - Pm[:,L_HIP]
+    fwd_m = np.cross(rgt_m, up_m)
+    fn = np.linalg.norm(fwd_m, axis=1, keepdims=True); fn[fn<1e-9]=1
+    fwd_m /= fn
+    un = np.linalg.norm(up_m, axis=1, keepdims=True); un[un<1e-9]=1
+    up_m /= un
+
+    good_list = list(good_idx)
+    # continuous yaw over GOOD frames (shortest-path unwrap between samples)
+    yaw_g = np.zeros(len(good_list))
+    prev = None
+    for k, gi in enumerate(good_list):
+        y = np.arctan2(fwd_m[gi,0], fwd_m[gi,2])
+        if prev is None:
+            yaw_g[k] = y
+        else:
+            dlt = (y - prev + np.pi) % (2*np.pi) - np.pi
+            yaw_g[k] = yaw_g[k-1] + dlt
+        prev = (yaw_g[k] + np.pi) % (2*np.pi) - np.pi
+    # hampel on the yaw signal itself: ramps (real spins) keep their local
+    # median; isolated flip spikes get replaced.
+    yaw_g, n_yaw_out = (lambda r: (r[0], int(r[1].sum())))(hampel(yaw_g, win=11, n_sig=3.0))
+    # interpolate yaw + up-vector to ALL frames, then light smoothing
+    idx_all = np.arange(F)
+    yaw_all = np.interp(idx_all, np.array(good_list, float), yaw_g)
+    yaw_all = smooth(yaw_all, 9)
+    up_all = np.zeros((F,3))
+    for c in range(3):
+        up_all[:,c] = np.interp(idx_all, np.array(good_list, float), up_m[good_list, c])
+        up_all[:,c] = smooth(up_all[:,c], 9)
+    n = np.linalg.norm(up_all, axis=1, keepdims=True); n[n<1e-9]=1
+    up_all /= n
+
+    # tilt soft clamp (35 deg, tanh knee)
+    TILT_MAX = np.radians(35.0)
+    Yup = np.array([0.0,1.0,0.0])
+    n_tilt_clamped = 0
     for i in range(F):
-        corr = axis_y_quat((yaw_fixed[i] - yaw_raw[i]) + YAW_OFFSET)
-        hips_global[i] = Q.qmul(corr, hips_global[i])
-        hips_quat[i]   = Q.qmul(Q.qconj(hipsParentQ), hips_global[i])   # world -> local
+        u = up_all[i]
+        cosT = np.clip(u[1], -1.0, 1.0)
+        theta = np.arccos(cosT)
+        if theta > 1e-4:
+            th2 = TILT_MAX * np.tanh(theta / TILT_MAX)
+            if theta > TILT_MAX: n_tilt_clamped += 1
+            horiz = u - u[1]*Yup
+            hn = np.linalg.norm(horiz)
+            horiz = horiz/hn if hn > 1e-9 else np.array([0.0,0.0,1.0])
+            up_all[i] = np.cos(th2)*Yup + np.sin(th2)*horiz
+
+    # rebuild hips orientation: yaw sets heading exactly, tilt from clamped up
+    for i in range(F):
+        psi = yaw_all[i]
+        fwd_h = np.array([np.sin(psi), 0.0, np.cos(psi)])
+        u = up_all[i]
+        r = np.cross(u, fwd_h)
+        rn = np.linalg.norm(r)
+        r = r/rn if rn > 1e-9 else np.array([1.0,0.0,0.0])
+        Ralign = Q.frame_align(rest_right, rest_up, r, u)
+        G0 = Q.qmul(Ralign, restQuat["mixamorig:Hips"])
+        # enforce heading EXACTLY on the runtime's probe axis (hips local +Z):
+        psi0 = quat_forward_yaw(G0)
+        G = Q.qmul(axis_y_quat(psi - psi0), G0)
+        hips_global[i] = G
+        hips_quat[i]   = Q.qmul(Q.qconj(hipsParentQ), G)        # world -> local
+    print(f"yaw rebuild: {n_yaw_out} hampel outliers replaced, {n_tilt_clamped} frames tilt-clamped (>{np.degrees(TILT_MAX):.0f} deg)")
+
+    # ---- automated facing assertion: 90-130 s high-confidence frames must
+    # face the audience (+Z). Video frames at 110/155 confirm frontal there.
+    tsec = idx_all / fps
+    w = (tsec >= 90) & (tsec <= 130) & GOOD
+    fz_check = np.array([quat_forward_yaw(hips_global[i]) for i in np.where(w)[0]])
+    mean_fz = float(np.mean(np.cos(fz_check)))
+    print(f"facing check 90-130s: mean fz={mean_fz:.3f} over {w.sum()} good frames")
+    assert mean_fz > 0.4, f"facing check FAILED: mean fz={mean_fz:.3f} <= 0.4"
 
     # ---- light Savitzky-Golay on quats (win 7, poly 2) + renormalize ----
     def filt_quat(arr):
@@ -332,7 +404,9 @@ def main():
     # After the 180 facing flip the lateral sense is mirrored, so negate.
     # =====================================================================
     lat = smooth(nxArr, 21)                          # ~0.7 s: responsive, denoised
-    lat = -(lat - np.median(lat)) * 12.0             # normalized drift -> metres (mirror for 180)
+    # camera sits at +Z looking -Z => screen-right == world +X; normalized-x
+    # grows to screen-right, so the gain is POSITIVE (v3's negation mirrored it).
+    lat = (lat - np.median(lat)) * 12.0              # normalized drift -> metres
     lat = np.clip(lat, -4.0, 4.0)                    # stage half-width ~4 m
     x_b = lat / (0.01 * posScale)                    # metres -> baked units
 
