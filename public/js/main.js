@@ -448,6 +448,10 @@ async function boot() {
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
 
+    // Self-heal canvas size: some embedded/paned browsers report 0x0 at boot
+    // and never fire a window resize afterwards.
+    if (renderer.domElement.width === 0 && window.innerWidth > 0) onResize();
+
     // Sync backbone: animation is a pure function of the audio playhead.
     const t = clock.currentTime;
     if (performer) performer.update(t);
