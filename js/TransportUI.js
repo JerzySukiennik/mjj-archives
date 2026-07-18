@@ -13,13 +13,19 @@ function fmtTime(sec) {
 export class TransportUI {
   /**
    * @param {import('./PlaybackClock.js').PlaybackClock} clock
-   * @param {object} [els] optional DOM element overrides.
+   * @param {object} [opts] role + optional DOM element overrides.
+   *   opts.role: 'host' (default) — full interactive control.
+   *              'guest' — display-only: controls disabled, no input/keyboard
+   *              listeners bound; the clock is driven remotely by Room, and the
+   *              rAF poll keeps time/seek-fill animating from the clock.
    */
-  constructor(clock, els = {}) {
+  constructor(clock, opts = {}) {
     this.clock = clock;
+    this.role = opts.role || 'host';
     this._scrubbing = false;
     this._unsubs = [];
 
+    const els = opts;
     this.root = els.root || document.getElementById('transport');
     this.playBtn = els.playBtn || document.getElementById('play-btn');
     this.seekBar = els.seekBar || document.getElementById('seek-bar');
@@ -31,6 +37,16 @@ export class TransportUI {
     this.seekBar.max = SEEK_RESOLUTION;
     this.seekBar.step = 1;
 
+    if (this.role === 'guest') {
+      // Display-only: visually + functionally disable the interactive controls.
+      this.root.classList.add('guest');
+      this.playBtn.disabled = true;
+      this.seekBar.disabled = true;
+      this.rateSel.disabled = true;
+    } else {
+      this.root.classList.remove('guest');
+    }
+
     this._bind();
     this._render();
     this._loop = this._loop.bind(this);
@@ -38,6 +54,15 @@ export class TransportUI {
   }
 
   _bind() {
+    // Clock event subscriptions — needed in BOTH roles so the display reflects
+    // the (remotely or locally driven) clock.
+    this._unsubs.push(this.clock.on('statechange', () => this._render()));
+    this._unsubs.push(this.clock.on('ratechange', () => this._syncRate()));
+    this._unsubs.push(this.clock.on('seeked', () => { if (!this._scrubbing) this._syncSeek(); }));
+
+    // Guests bind NO input or keyboard listeners — the clock is host-authoritative.
+    if (this.role === 'guest') return;
+
     // Play / pause button.
     this.playBtn.addEventListener('click', () => this.clock.toggle());
 
@@ -64,11 +89,6 @@ export class TransportUI {
     this.rateSel.addEventListener('change', () => {
       this.clock.setRate(parseFloat(this.rateSel.value));
     });
-
-    // Clock events.
-    this._unsubs.push(this.clock.on('statechange', () => this._render()));
-    this._unsubs.push(this.clock.on('ratechange', () => this._syncRate()));
-    this._unsubs.push(this.clock.on('seeked', () => { if (!this._scrubbing) this._syncSeek(); }));
 
     // Keyboard: Space = toggle, Left/Right = ±10s.
     this._onKey = (e) => {

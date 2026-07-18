@@ -30,6 +30,57 @@
       </div>
     </div>
 
+    <!-- Lobby overlay (entry / room / collapsed chip) -->
+    <div id="lobby-overlay" class="overlay hidden">
+      <!-- Entry view -->
+      <div id="lobby-entry" class="lobby-panel">
+        <div class="overlay-title">MJJ ARCHIVES</div>
+        <div class="lobby-sub">Motown 25 — Billie Jean, 1983</div>
+
+        <label class="lobby-field">
+          <span class="lobby-field-label">Nickname</span>
+          <input id="lobby-name" type="text" maxlength="16" autocomplete="off"
+                 placeholder="Your name" />
+        </label>
+
+        <button id="lobby-create" class="lobby-btn primary">CREATE ROOM</button>
+
+        <div class="lobby-divider"><span>or join</span></div>
+
+        <div class="lobby-join-row">
+          <input id="lobby-code" type="text" maxlength="6" autocomplete="off"
+                 spellcheck="false" placeholder="CODE" class="lobby-code-input" />
+          <button id="lobby-join" class="lobby-btn">JOIN</button>
+        </div>
+
+        <div id="lobby-error" class="lobby-error"></div>
+      </div>
+
+      <!-- Room view (pre-walk lobby) -->
+      <div id="lobby-room" class="lobby-panel hidden">
+        <div class="lobby-sub">ROOM CODE</div>
+        <div id="lobby-room-code" class="lobby-room-code">------</div>
+        <ul id="lobby-players" class="lobby-players"></ul>
+        <div class="lobby-room-actions">
+          <button id="lobby-start" class="lobby-btn primary" disabled>START</button>
+          <button id="lobby-leave" class="lobby-btn">LEAVE</button>
+        </div>
+        <div id="lobby-status" class="lobby-status"></div>
+      </div>
+
+      <!-- Collapsed chip (visible while walking) -->
+      <div id="lobby-chip" class="lobby-chip hidden">
+        <div class="lobby-chip-head">
+          ROOM <span id="lobby-chip-code" class="lobby-chip-code">------</span>
+        </div>
+        <ul id="lobby-chip-players" class="lobby-players"></ul>
+        <button id="lobby-chip-start" class="lobby-btn primary hidden" disabled>START</button>
+      </div>
+    </div>
+
+    <!-- Walk hint -->
+    <div id="walk-hint" class="walk-hint hidden">Click to walk — WASD + mouse</div>
+
     <!-- Transport bar shell -->
     <div id="transport" class="transport hidden">
       <button id="play-btn" class="play-btn" aria-label="Play / Pause" title="Play / Pause (Space)">▶</button>
