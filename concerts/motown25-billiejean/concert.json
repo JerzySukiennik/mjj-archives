@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "Billie Jean — Motown 25 (1983)",
+  "audio": "billiejean.m4a",
+  "model": "mj.glb",
+  "motion": null,
+  "cameraTrack": null,
+  "markers": null,
+  "hall": "pasadena-civic",
+  "duration": 296.77
+}

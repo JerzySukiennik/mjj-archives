@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MJJ Archives — Billie Jean (Motown 25, 1983)</title>
+  <link rel="stylesheet" href="./css/ui.css" />
+  <!-- three.js pinned via import map. NEVER r128. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- WebGL canvas mount -->
+    <div id="canvas-container"></div>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="overlay">
+      <div class="overlay-inner">
+        <div class="overlay-title">MJJ ARCHIVES</div>
+        <div class="overlay-sub" id="loading-status">Loading concert…</div>
+        <div class="overlay-bar"><div class="overlay-bar-fill" id="loading-bar"></div></div>
+        <div class="overlay-hint" id="loading-hint"></div>
+      </div>
+    </div>
+
+    <!-- Transport bar shell -->
+    <div id="transport" class="transport hidden">
+      <button id="play-btn" class="play-btn" aria-label="Play / Pause" title="Play / Pause (Space)">▶</button>
+      <div class="time-display"><span id="time-current">0:00</span> / <span id="time-total">0:00</span></div>
+      <input id="seek-bar" class="seek-bar" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+      <label class="rate-control">
+        <span class="rate-label">Rate</span>
+        <select id="rate-select" aria-label="Playback rate">
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
