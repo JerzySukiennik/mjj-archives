@@ -110,7 +110,9 @@ export class LobbyUI {
       if (this.chipStartBtn) this._hide(this.chipStartBtn);
     }
     this.leaveBtn.onclick = () => onLeave && onLeave();
-    this.setStatus(isHost ? 'Waiting for players to load…' : 'Waiting for the host to start…');
+    this.setStatus(isHost
+      ? 'Standing by — waiting for all players to load…'
+      : 'Standing by — waiting for the host to start playback…');
   }
 
   // ---- collapsed chip (while walking) ----

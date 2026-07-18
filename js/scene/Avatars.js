@@ -24,19 +24,26 @@ const EYE_HEIGHT = 1.7;
 const NAMETAG_Y = 2.15;        // above head
 const LERP_RATE = 8;           // position lerp factor = min(1, LERP_RATE*dt)
 
-// Shared geometry across all avatars (disposed once in dispose()).
+// Shared geometry across all avatars (disposed once in dispose()). Its segment
+// counts are set once from the first Avatars ctor (quality build-time knob); a
+// later tier change won't rebuild it (see qualityDesign — "applies after reload").
 let _sharedCapsuleGeo = null;
-function capsuleGeometry() {
+function capsuleGeometry(segments) {
   if (!_sharedCapsuleGeo) {
-    _sharedCapsuleGeo = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HEIGHT, 6, 12);
+    const [capSeg, radialSeg] = segments || [6, 12];
+    _sharedCapsuleGeo = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HEIGHT, capSeg, radialSeg);
   }
   return _sharedCapsuleGeo;
 }
 
 export class Avatars {
-  /** @param {THREE.Scene} scene */
-  constructor(scene) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {{segments?: [number, number]}} [opts] - [capSegments, radialSegments]; default [6,12].
+   */
+  constructor(scene, opts = {}) {
     this.scene = scene;
+    this._segments = opts.segments || [6, 12];
     this.localId = null;
     /** @type {Map<string, object>} id -> avatar record */
     this._avatars = new Map();
@@ -127,7 +134,7 @@ export class Avatars {
       roughness: 0.7,
       metalness: 0.1,
     });
-    const body = new THREE.Mesh(capsuleGeometry(), material);
+    const body = new THREE.Mesh(capsuleGeometry(this._segments), material);
     // Capsule centre sits at half total height so feet rest at group origin.
     body.position.y = CAPSULE_HEIGHT / 2 + CAPSULE_RADIUS;
     body.castShadow = true;

@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MJJ Archives — Billie Jean (Motown 25, 1983)</title>
+  <!-- Cache-busting version. BUMP BOTH ON EVERY DEPLOY: this constant AND the
+       ?v= suffix on the main.js module tag below must always match. -->
+  <script>window.MJJ_V = '1';</script>
   <link rel="stylesheet" href="./css/ui.css" />
   <!-- three.js pinned via import map. NEVER r128. -->
   <script type="importmap">
@@ -36,6 +39,7 @@
       <div id="lobby-entry" class="lobby-panel">
         <div class="overlay-title">MJJ ARCHIVES</div>
         <div class="lobby-sub">Motown 25 — Billie Jean, 1983</div>
+        <div class="concert-card">BILLIE JEAN — MOTOWN 25 (1983)</div>
 
         <label class="lobby-field">
           <span class="lobby-field-label">Nickname</span>
@@ -59,6 +63,7 @@
       <!-- Room view (pre-walk lobby) -->
       <div id="lobby-room" class="lobby-panel hidden">
         <div class="lobby-sub">ROOM CODE</div>
+        <div class="concert-card">BILLIE JEAN — MOTOWN 25 (1983)</div>
         <div id="lobby-room-code" class="lobby-room-code">------</div>
         <ul id="lobby-players" class="lobby-players"></ul>
         <div class="lobby-room-actions">
@@ -86,8 +91,12 @@
 
     <!-- Guest bar (guests only; inner DOM built by GuestBar.js) -->
     <div id="guest-bar" class="hidden"></div>
+
+    <!-- Retro '83 film-grain + vignette overlay (styled in ui.css; hidden on low). -->
+    <div id="fx-overlay" aria-hidden="true"></div>
   </div>
 
-  <script type="module" src="./js/main.js"></script>
+  <!-- ?v= MUST match window.MJJ_V above. BUMP BOTH ON EVERY DEPLOY. -->
+  <script type="module" src="./js/main.js?v=1"></script>
 </body>
 </html>

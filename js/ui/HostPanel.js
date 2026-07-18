@@ -23,12 +23,13 @@ export class HostPanel {
   /**
    * @param {import('../PlaybackClock.js').PlaybackClock} clock
    * @param {object} callbacks
-   * @param {{ markersUrl?: string|null, duration?: number }} [opts]
+   * @param {{ markersUrl?: string|null, duration?: number, quality?: object }} [opts]
    */
   constructor(clock, callbacks = {}, opts = {}) {
     this.clock = clock;
     this.cb = callbacks;
     this.markersUrl = opts.markersUrl || null;
+    this.qm = opts.quality || null;
 
     this._scrubbing = false;
     this._collapsed = false;
@@ -104,6 +105,17 @@ export class HostPanel {
             <button id="hp-compare" class="hp-btn hp-btn-sm" title="Compare with original video">COMPARE</button>
             <button id="hp-players-toggle" class="hp-btn hp-btn-sm" title="Players / ready check">PLAYERS</button>
           </div>
+          <div class="hp-deck-row">
+            <label class="hp-quality">
+              <span>QUALITY</span>
+              <select id="hp-quality-sel" class="q-select" title="Render quality (local; some knobs apply after reload)">
+                <option value="auto">AUTO</option>
+                <option value="low">LOW</option>
+                <option value="medium">MED</option>
+                <option value="high">HIGH</option>
+              </select>
+            </label>
+          </div>
         </section>
 
         <!-- PLAYERS DRAWER -->
@@ -132,6 +144,7 @@ export class HostPanel {
       mute: $('hp-mute'),
       lights: Array.from(this.root.querySelectorAll('.hp-light')),
       compare: $('hp-compare'),
+      quality: $('hp-quality-sel'),
       playersToggle: $('hp-players-toggle'),
       drawer: $('hp-drawer'), players: $('hp-players'), resetSeats: $('hp-reset-seats'),
     };
@@ -185,6 +198,16 @@ export class HostPanel {
 
     // Compare.
     e.compare.addEventListener('click', () => this.cb.onCompareToggle && this.cb.onCompareToggle());
+
+    // Quality selector (per-player, local). Reflects the resolved tier on AUTO.
+    if (this.qm && e.quality) {
+      e.quality.value = this.qm.mode;
+      e.quality.addEventListener('change', () => this.qm.set(e.quality.value));
+      this._unsubs.push(this.qm.onChange((tier, mode) => this._syncQuality(tier, mode)));
+      this._syncQuality(this.qm.tier, this.qm.mode);
+    } else if (e.quality) {
+      e.quality.disabled = true;
+    }
 
     // Players drawer.
     e.playersToggle.addEventListener('click', () => {
@@ -331,6 +354,17 @@ export class HostPanel {
 
   setCompareActive(bool) {
     this.el.compare.classList.toggle('active', !!bool);
+  }
+
+  _syncQuality(tier, mode) {
+    const sel = this.el.quality;
+    if (!sel) return;
+    if (sel.value !== mode) sel.value = mode;
+    const autoOpt = sel.querySelector('option[value="auto"]');
+    if (autoOpt) {
+      const short = tier === 'medium' ? 'MED' : tier.toUpperCase();
+      autoOpt.textContent = mode === 'auto' ? `AUTO (${short})` : 'AUTO';
+    }
   }
 
   // ---------------- render helpers ----------------

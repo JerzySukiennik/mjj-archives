@@ -2,13 +2,22 @@
 
 :root {
   --bg: #0a0908;
+  /* --- Single canonical amber palette (Phase 5: the two old sets are unified) --- */
   --amber: #ffb347;
   --amber-dim: #c8863b;
   --amber-glow: rgba(255, 179, 71, 0.35);
+  --amber-rgb: 255, 179, 71;
   --panel: rgba(18, 15, 12, 0.82);
   --panel-border: rgba(255, 179, 71, 0.28);
   --text: #f2e6d4;
   --text-dim: #a89476;
+  /* Scanline accent used across decks/panels/overlays. */
+  --scanlines: repeating-linear-gradient(
+    0deg,
+    rgba(var(--amber-rgb), 0.03) 0px,
+    rgba(var(--amber-rgb), 0.03) 1px,
+    transparent 1px,
+    transparent 3px);
 }
 
 * { box-sizing: border-box; }
@@ -72,14 +81,15 @@ html, body {
    ============================================================ */
 
 :root {
-  --hp-amber: #ffb000;
-  --hp-amber-dim: #b57c07;
-  --hp-glow: rgba(255, 176, 0, 0.45);
+  /* Host-panel tokens now alias the single canonical amber palette above. */
+  --hp-amber: var(--amber);
+  --hp-amber-dim: var(--amber-dim);
+  --hp-glow: var(--amber-glow);
   --hp-panel-top: #262421;
   --hp-panel-bot: #16130f;
   --hp-btn: #1c1a16;
   --hp-btn-hover: #2a2620;
-  --hp-border: rgba(255, 176, 0, 0.30);
+  --hp-border: rgba(var(--amber-rgb), 0.30);
 }
 
 #host-panel {
@@ -97,7 +107,7 @@ html, body {
       transparent 3px),
     linear-gradient(180deg, var(--hp-panel-top) 0%, var(--hp-panel-bot) 100%);
   border-top: 1px solid var(--hp-border);
-  box-shadow: 0 -6px 26px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 176, 0, 0.06);
+  box-shadow: 0 -6px 26px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(var(--amber-rgb), 0.06);
   font-family: "Courier New", ui-monospace, Menlo, monospace;
   color: var(--hp-amber);
 }
@@ -136,7 +146,7 @@ html, body {
   flex-direction: column;
   gap: 8px;
   padding: 6px 12px;
-  border: 1px solid rgba(255, 176, 0, 0.16);
+  border: 1px solid rgba(var(--amber-rgb), 0.16);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.22);
 }
@@ -168,10 +178,10 @@ html, body {
   text-shadow: 0 0 6px var(--hp-glow);
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: inset 0 1px 0 rgba(255, 176, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 1px 0 rgba(var(--amber-rgb), 0.08), 0 1px 2px rgba(0, 0, 0, 0.5);
   transition: background 0.12s ease, box-shadow 0.12s ease;
 }
-.hp-btn:hover { background: var(--hp-btn-hover); box-shadow: 0 0 12px var(--hp-glow), inset 0 1px 0 rgba(255, 176, 0, 0.12); }
+.hp-btn:hover { background: var(--hp-btn-hover); box-shadow: 0 0 12px var(--hp-glow), inset 0 1px 0 rgba(var(--amber-rgb), 0.12); }
 .hp-btn:active { transform: translateY(1px); }
 .hp-btn.active { background: var(--hp-amber); color: #14100a; text-shadow: none; box-shadow: 0 0 14px var(--hp-glow); }
 .hp-btn-big { padding: 8px 18px; font-size: 13px; }
@@ -201,7 +211,7 @@ html, body {
   border-radius: 3px;
   background: linear-gradient(to right,
     var(--hp-amber) 0%, var(--hp-amber) var(--seek, 0%),
-    rgba(255, 176, 0, 0.15) var(--seek, 0%), rgba(255, 176, 0, 0.15) 100%);
+    rgba(var(--amber-rgb), 0.15) var(--seek, 0%), rgba(var(--amber-rgb), 0.15) 100%);
   cursor: pointer;
   outline: none;
 }
@@ -246,7 +256,7 @@ html, body {
   gap: 3px;
   padding: 1px 4px;
   background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 176, 0, 0.3);
+  border: 1px solid rgba(var(--amber-rgb), 0.3);
   border-radius: 3px;
   color: var(--hp-amber);
   font-size: 9px;
@@ -294,7 +304,7 @@ html, body {
 .hp-player {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 7px 8px; margin-bottom: 6px;
-  border: 1px solid rgba(255, 176, 0, 0.14);
+  border: 1px solid rgba(var(--amber-rgb), 0.14);
   border-radius: 5px;
   background: rgba(0, 0, 0, 0.25);
 }
@@ -304,7 +314,7 @@ html, body {
   font-size: 9px; letter-spacing: 0.1em; padding: 3px 6px; border-radius: 4px; font-weight: bold;
 }
 .hp-badge.ready { color: #9fe6a0; background: rgba(80, 200, 100, 0.14); border: 1px solid rgba(80, 200, 100, 0.4); }
-.hp-badge.loading { color: var(--hp-amber-dim); background: rgba(255, 176, 0, 0.06); border: 1px solid var(--hp-border); }
+.hp-badge.loading { color: var(--hp-amber-dim); background: rgba(var(--amber-rgb), 0.06); border: 1px solid var(--hp-border); }
 
 /* ---- Guest bar ---- */
 #guest-bar {
@@ -332,12 +342,9 @@ html, body {
 }
 .gb-readout #gb-time-tot { color: var(--text-dim); }
 .gb-quality { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.12em; color: var(--text-dim); text-transform: uppercase; }
-#gb-quality-sel {
-  background: rgba(255, 179, 71, 0.06); color: var(--text-dim);
-  border: 1px solid var(--panel-border); border-radius: 6px;
-  padding: 4px 6px; font-family: inherit; font-size: 11px;
-  opacity: 0.5; cursor: not-allowed;
-}
+/* Guest-bar quality select is now LIVE (Phase 5). It also carries .q-select;
+   these id-level rules only fill in what .q-select doesn't, at full opacity. */
+#gb-quality-sel { font-size: 11px; }
 
 /* ============================================================
    Phase 3 — Lobby / multiplayer UI (plain-but-clean; retro
@@ -544,3 +551,119 @@ html, body {
   pointer-events: none;
 }
 .walk-hint.hidden { display: none; }
+
+/* ============================================================
+   Phase 5 — Retro '83 "archive" polish
+   Film-grain + vignette overlay, scanline accents, quality
+   selects, concert tape-label card, themed loading screen.
+   All subtle: text stays crisp, house stays moody.
+   ============================================================ */
+
+/* ---- (2) Full-screen film-grain + vignette overlay ----
+   #fx-overlay is a static div added to index.html (Task 1). It floats
+   above the WebGL canvas but below every interactive UI panel. */
+#fx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;                 /* canvas ~0, UI panels 12–20 */
+  pointer-events: none;
+  /* Animated grain (feTurbulence data-URI) + amber-tinted vignette. */
+  background-image:
+    radial-gradient(ellipse at center,
+      transparent 55%,
+      rgba(10, 8, 6, 0.28) 88%,
+      rgba(6, 4, 3, 0.55) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-size: cover, 180px 180px;
+  opacity: 0.05;
+  mix-blend-mode: screen;
+  animation: fx-grain 0.9s steps(2) infinite;
+}
+@keyframes fx-grain {
+  0%   { background-position: center, 0 0; }
+  50%  { background-position: center, -60px 30px; }
+  100% { background-position: center, 40px -50px; }
+}
+/* Low tier: kill the overlay entirely (perf + the low preset drops FX). */
+body[data-quality="low"] #fx-overlay { display: none; }
+
+/* ---- (3) Scanline accents on decks / panels / overlays ---- */
+.hp-deck,
+.gb-inner,
+.lobby-panel,
+#loading-overlay .overlay-inner {
+  background-image: var(--scanlines);
+}
+/* Panels that already paint a background: layer scanlines on top of it. */
+.gb-inner { background-image: var(--scanlines), none; background-color: var(--panel); }
+.lobby-panel { background-image: var(--scanlines), none; background-color: var(--panel); }
+
+/* ---- (4) Quality select — retro toggle, matches .hp-btn family ---- */
+.q-select {
+  background: var(--hp-btn);
+  color: var(--amber);
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-family: "Courier New", ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  /* Amber chevron. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23ffb347'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  padding-right: 22px;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+.q-select:hover { background-color: var(--hp-btn-hover); box-shadow: 0 0 10px var(--amber-glow); }
+.q-select:focus { border-color: var(--amber-dim); box-shadow: 0 0 10px var(--amber-glow); }
+.q-select option { background: #14100a; color: var(--text); }
+
+/* ---- (5) Concert tape-label card ---- */
+.concert-card {
+  display: inline-block;
+  margin: 4px 0 16px;
+  padding: 5px 12px;
+  border: 1px solid var(--amber-dim);
+  border-radius: 3px;
+  background: rgba(var(--amber-rgb), 0.05);
+  color: var(--amber-dim);
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  font-variant: small-caps;
+  white-space: nowrap;
+}
+
+/* ---- (6) Loading overlay theming: sub-line + blinking cursor ---- */
+.overlay-sysline {
+  color: var(--amber-dim);
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.overlay-sysline .blink {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber-glow);
+  animation: overlay-blink 1s steps(1) infinite;
+}
+@keyframes overlay-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+
+/* ---- Reduced motion: freeze grain + cursor ---- */
+@media (prefers-reduced-motion: reduce) {
+  #fx-overlay { animation: none; }
+  .overlay-sysline .blink { animation: none; opacity: 1; }
+}

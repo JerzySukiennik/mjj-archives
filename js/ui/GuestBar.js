@@ -10,9 +10,13 @@ function fmtTime(sec) {
 }
 
 export class GuestBar {
-  /** @param {import('../PlaybackClock.js').PlaybackClock} clock */
-  constructor(clock) {
+  /**
+   * @param {import('../PlaybackClock.js').PlaybackClock} clock
+   * @param {import('../QualityManager.js').QualityManager} [qm]
+   */
+  constructor(clock, qm) {
     this.clock = clock;
+    this.qm = qm || null;
     this._unsubs = [];
 
     this.root = document.getElementById('guest-bar');
@@ -24,10 +28,10 @@ export class GuestBar {
         <button id="gb-mute" class="hp-btn hp-btn-sm" title="Mute (local only)">MUTE</button>
         <label class="gb-quality">
           <span>QUALITY</span>
-          <select id="gb-quality-sel" disabled title="Coming in Phase 5">
-            <option value="auto" selected>AUTO</option>
+          <select id="gb-quality-sel" class="q-select" title="Render quality (local; some knobs apply after reload)">
+            <option value="auto">AUTO</option>
             <option value="low">LOW</option>
-            <option value="med">MED</option>
+            <option value="medium">MED</option>
             <option value="high">HIGH</option>
           </select>
         </label>
@@ -37,16 +41,37 @@ export class GuestBar {
     this.timeCur = this.root.querySelector('#gb-time-cur');
     this.timeTot = this.root.querySelector('#gb-time-tot');
     this.muteBtn = this.root.querySelector('#gb-mute');
+    this.qualitySel = this.root.querySelector('#gb-quality-sel');
 
     this.muteBtn.addEventListener('click', () => this.clock.setMuted(!this.clock.muted));
     this._unsubs.push(this.clock.on('mutechange', () => this._syncMute()));
     this._unsubs.push(this.clock.on('statechange', () => { this.timeTot.textContent = fmtTime(this.clock.duration); }));
+
+    // Quality selector (per-player, local). Reflects the resolved tier on AUTO.
+    if (this.qm) {
+      this.qualitySel.value = this.qm.mode;
+      this.qualitySel.addEventListener('change', () => this.qm.set(this.qualitySel.value));
+      this._unsubs.push(this.qm.onChange((tier, mode) => this._syncQuality(tier, mode)));
+      this._syncQuality(this.qm.tier, this.qm.mode);
+    } else {
+      this.qualitySel.disabled = true;
+    }
 
     this.timeTot.textContent = fmtTime(this.clock.duration);
     this._syncMute();
 
     this._raf = this._raf.bind(this);
     requestAnimationFrame(this._raf);
+  }
+
+  _syncQuality(tier, mode) {
+    if (!this.qualitySel) return;
+    if (this.qualitySel.value !== mode) this.qualitySel.value = mode;
+    const autoOpt = this.qualitySel.querySelector('option[value="auto"]');
+    if (autoOpt) {
+      const short = tier === 'medium' ? 'MED' : tier.toUpperCase();
+      autoOpt.textContent = mode === 'auto' ? `AUTO (${short})` : 'AUTO';
+    }
   }
 
   _syncMute() {

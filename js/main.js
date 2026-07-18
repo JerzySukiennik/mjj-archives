@@ -23,6 +23,13 @@ import { HostPanel } from './ui/HostPanel.js';
 import { GuestBar } from './ui/GuestBar.js';
 import { Keybinds } from './ui/Keybinds.js';
 import { CompareMode } from './CompareMode.js';
+import { QualityManager } from './QualityManager.js';
+
+// Cache-busting: every dynamic import is routed through vmod() so a version bump
+// forces GH Pages / the browser module cache to re-fetch. The version constant
+// lives in index.html as window.MJJ_V — BUMP BOTH (index.html + that tag) EACH DEPLOY.
+const V = (typeof window !== 'undefined' && window.MJJ_V) || '0';
+const vmod = (p) => import(/* @vite-ignore */ `${p}?v=${V}`);
 
 const MANIFEST_URL = './concerts/motown25-billiejean/concert.json';
 
@@ -70,7 +77,10 @@ async function boot() {
 
   // 3) Renderer.
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Intel MBP clamp.
+  // QualityManager owns the pixelRatio clamp (Intel MBP defaults to 'medium').
+  // Construct it right after the renderer so its sync probe sets the clamp before
+  // the first frame; buildOpts() then feeds the scene builders below.
+  const qm = new QualityManager(renderer);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -90,17 +100,19 @@ async function boot() {
   let stageAnchor = new THREE.Object3D(); // fallback anchor if Hall isn't present yet.
   scene.add(stageAnchor);
 
+  const buildOpts = qm.buildOpts();
   try {
-    const { createHall } = await import('./scene/Hall.js');
-    const built = createHall(scene, {});
+    const { createHall } = await vmod('./scene/Hall.js');
+    const built = createHall(scene, { seatRows: buildOpts.seatRows });
     hall = built;
     if (built && built.stageAnchor) stageAnchor = built.stageAnchor;
 
-    const { createLighting } = await import('./scene/Lighting.js');
+    const { createLighting } = await vmod('./scene/Lighting.js');
     lighting = createLighting(scene, stageAnchor, {});
+    qm.attach({ lighting });
 
     setStatus('Loading performer…');
-    const { Performer } = await import('./scene/Performer.js');
+    const { Performer } = await vmod('./scene/Performer.js');
     performer = await Performer.load(manifest, {
       onProgress: (frac) => setProgress(0.5 + frac * 0.4),
     });
@@ -135,13 +147,13 @@ async function boot() {
   let directorCamera = null;
   let avatars = null;
   try {
-    const { WalkControls } = await import('./WalkControls.js');
+    const { WalkControls } = await vmod('./WalkControls.js');
     walkControls = new WalkControls(camera, renderer.domElement, { bounds: WALK_BOUNDS });
   } catch (err) {
     console.warn('[main] WalkControls unavailable:', err.message);
   }
   try {
-    const { DirectorCamera } = await import('./DirectorCamera.js');
+    const { DirectorCamera } = await vmod('./DirectorCamera.js');
     directorCamera = new DirectorCamera(camera, stageAnchor);
     directorCamera.setEnabled(false);
     // Feed the director cam the performer's live focus points (feet/chest/face).
@@ -158,8 +170,8 @@ async function boot() {
     console.warn('[main] DirectorCamera unavailable:', err.message);
   }
   try {
-    const { Avatars } = await import('./scene/Avatars.js');
-    avatars = new Avatars(scene);
+    const { Avatars } = await vmod('./scene/Avatars.js');
+    avatars = new Avatars(scene, { segments: buildOpts.avatarSegments });
   } catch (err) {
     console.warn('[main] Avatars unavailable:', err.message);
   }
@@ -187,7 +199,7 @@ async function boot() {
       }
     }
   }
-  window.__mjj = { clock, renderer, scene, camera, performer, hall, lighting, ...rt };
+  window.__mjj = { clock, renderer, scene, camera, performer, hall, lighting, quality: qm, ...rt };
   const syncGlobals = () => Object.assign(window.__mjj, rt);
 
   // 6) Lobby. Assets are loaded by now; reveal the lobby instead of the transport.
@@ -199,10 +211,10 @@ async function boot() {
   let net = null;
   try {
     const [FirebaseClient, RoomMod, ClockSyncMod, PresenceMod] = await Promise.all([
-      import('./net/FirebaseClient.js'),
-      import('./net/Room.js'),
-      import('./net/ClockSync.js'),
-      import('./net/Presence.js'),
+      vmod('./net/FirebaseClient.js'),
+      vmod('./net/Room.js'),
+      vmod('./net/ClockSync.js'),
+      vmod('./net/Presence.js'),
     ]);
     net = {
       db: FirebaseClient.db,
@@ -347,12 +359,13 @@ async function boot() {
       const panel = new HostPanel(clock, cbs, {
         markersUrl: manifest.markers,
         duration: manifest.duration,
+        quality: qm,
       });
       rt.hostPanel = panel;
       panel.setLightingUI('single-spot');
       rt.keybinds = new Keybinds(clock, panel, cbs);
     } else {
-      rt.guestBar = new GuestBar(clock);
+      rt.guestBar = new GuestBar(clock, qm);
       if (room.on) {
         room.on('lightingchange', (p) => { if (lighting && lighting.applyPreset) lighting.applyPreset(p); });
         room.on('resetseats', () => snapToSpawn());
@@ -384,6 +397,8 @@ async function boot() {
 
   function enterHall() {
     rt.inHall = true;
+    // Kick off the one-shot 5s fps sample (auto mode only) now that the scene renders.
+    qm.startFpsSample();
     lobby.collapseToChip();
     camera.position.set(SPAWN.x, SPAWN.y, SPAWN.z);
     if (walkControls) {
@@ -420,7 +435,7 @@ async function boot() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, qm.pixelRatioClamp()));
   }
   window.addEventListener('resize', onResize);
 
