@@ -63,6 +63,85 @@ export function createLighting(scene, stageAnchor, opts = {}) {
     added.push(rim);
   }
 
+  // ---- Two broad stage washes for the 'full-stage' preset (off by default) --
+  // Wide, soft, non-shadow-casting fills aimed left/right of the performer.
+  const washL = new THREE.SpotLight(0xfff2d6, 0);
+  washL.position.set(aim.x - 8, aim.y + 10, aim.z + 8);
+  washL.angle = Math.PI / 4;
+  washL.penumbra = 0.9;
+  washL.decay = 1.2;
+  washL.distance = 55;
+  washL.castShadow = false;
+  const washLTarget = new THREE.Object3D();
+  washLTarget.position.set(aim.x - 3, aim.y, aim.z);
+  scene.add(washLTarget);
+  washL.target = washLTarget;
+  scene.add(washL);
+  added.push(washL, washLTarget);
+
+  const washR = new THREE.SpotLight(0xfff2d6, 0);
+  washR.position.set(aim.x + 8, aim.y + 10, aim.z + 8);
+  washR.angle = Math.PI / 4;
+  washR.penumbra = 0.9;
+  washR.decay = 1.2;
+  washR.distance = 55;
+  washR.castShadow = false;
+  const washRTarget = new THREE.Object3D();
+  washRTarget.position.set(aim.x + 3, aim.y, aim.z);
+  scene.add(washRTarget);
+  washR.target = washRTarget;
+  scene.add(washR);
+  added.push(washR, washRTarget);
+
+  // Capture the exact 'single-spot' defaults so applyPreset can restore them.
+  const proscFillRef = fill ? added.find((o) => o instanceof THREE.PointLight) : null;
+  const rimRef = fill ? added.find((o) => o instanceof THREE.DirectionalLight) : null;
+  const defaults = {
+    spotIntensity: spot.intensity,
+    spotAngle: spot.angle,
+    hemi: hemi.intensity,
+    prosc: proscFillRef ? proscFillRef.intensity : 0,
+    rim: rimRef ? rimRef.intensity : 0,
+  };
+
+  /**
+   * Switch lighting preset by mutating intensities/angles only (no scene
+   * rebuild, no fog change). Cheap enough to call at any time.
+   * @param {'single-spot'|'full-stage'|'blackout'} name
+   */
+  function applyPreset(name) {
+    switch (name) {
+      case 'single-spot':
+        spot.intensity = defaults.spotIntensity;
+        spot.angle = defaults.spotAngle;
+        hemi.intensity = defaults.hemi;
+        if (proscFillRef) proscFillRef.intensity = defaults.prosc;
+        if (rimRef) rimRef.intensity = defaults.rim;
+        washL.intensity = 0;
+        washR.intensity = 0;
+        break;
+      case 'full-stage':
+        spot.intensity = 55;
+        spot.angle = Math.PI / 6;
+        hemi.intensity = 0.6;
+        if (proscFillRef) proscFillRef.intensity = 14;
+        if (rimRef) rimRef.intensity = 0.6;
+        washL.intensity = 35;
+        washR.intensity = 35;
+        break;
+      case 'blackout':
+        spot.intensity = 0;
+        hemi.intensity = 0.02;
+        if (proscFillRef) proscFillRef.intensity = 0;
+        if (rimRef) rimRef.intensity = 0;
+        washL.intensity = 0;
+        washR.intensity = 0;
+        break;
+      default:
+        console.warn('[Lighting] unknown preset:', name);
+    }
+  }
+
   // ---- Fog for depth falloff into darkness -------------------------------
   let prevFog = null;
   if (fog) {
@@ -80,5 +159,5 @@ export function createLighting(scene, stageAnchor, opts = {}) {
     if (fog) scene.fog = prevFog;
   }
 
-  return { dispose, spot };
+  return { dispose, spot, applyPreset };
 }

@@ -5,7 +5,8 @@
   "model": "mj.glb",
   "motion": null,
   "cameraTrack": null,
-  "markers": null,
+  "markers": "markers.json",
+  "referenceVideo": "reference.mp4",
   "hall": "pasadena-civic",
   "duration": 296.77
 }

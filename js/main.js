@@ -5,7 +5,7 @@
 //   2) build WalkControls / DirectorCamera / Avatars
 //   3) show the lobby entry; on create/join -> Room + ClockSync + Presence
 //   4) collapse lobby to a chip, walk the hall (pre-show), sync avatars/presence
-//   5) host runs an interactive TransportUI + Start; guests get a display-only one
+//   5) host runs the full HostPanel deck + Keybinds; guests get a minimal GuestBar
 //   6) on Start (state 'performing' + cameraForced) all cameras lock to the
 //      DirectorCamera; otherwise everyone free-walks.
 //
@@ -18,8 +18,11 @@ import * as THREE from 'three';
 
 import { loadConcert } from './ConcertLoader.js';
 import { PlaybackClock } from './PlaybackClock.js';
-import { TransportUI } from './TransportUI.js';
 import { LobbyUI } from './LobbyUI.js';
+import { HostPanel } from './ui/HostPanel.js';
+import { GuestBar } from './ui/GuestBar.js';
+import { Keybinds } from './ui/Keybinds.js';
+import { CompareMode } from './CompareMode.js';
 
 const MANIFEST_URL = './concerts/motown25-billiejean/concert.json';
 
@@ -33,7 +36,6 @@ const overlayInner = overlay.querySelector('.overlay-inner');
 const statusEl = document.getElementById('loading-status');
 const barEl = document.getElementById('loading-bar');
 const hintEl = document.getElementById('loading-hint');
-const transportEl = document.getElementById('transport');
 const canvasContainer = document.getElementById('canvas-container');
 const lobbyEl = document.getElementById('lobby-overlay');
 const walkHintEl = document.getElementById('walk-hint');
@@ -152,10 +154,25 @@ async function boot() {
 
   // ---- shared runtime state (mutated once a room is joined) ----
   const rt = {
-    room: null, presence: null, clockSync: null, transportUI: null,
+    room: null, presence: null, clockSync: null,
+    hostPanel: null, guestBar: null, keybinds: null, compare: null,
     avatars, directorCamera, walkControls,
     inHall: false, wasPerforming: false, latestRoomDoc: null,
   };
+
+  // Snap the local camera + walk pose back to SPAWN (host reset / guest event).
+  function snapToSpawn() {
+    camera.position.set(SPAWN.x, SPAWN.y, SPAWN.z);
+    const stageW = stageAnchor.getWorldPosition(new THREE.Vector3());
+    camera.lookAt(stageW.x, stageW.y + 1.4, stageW.z);
+    if (walkControls) {
+      // WalkControls owns its own integrated position (no public reset). Nudge
+      // its internal pose to SPAWN so update() doesn't snap the camera back.
+      if (walkControls._pos && walkControls._pos.set) {
+        walkControls._pos.set(SPAWN.x, SPAWN.y, SPAWN.z);
+      }
+    }
+  }
   window.__mjj = { clock, renderer, scene, camera, performer, hall, lighting, ...rt };
   const syncGlobals = () => Object.assign(window.__mjj, rt);
 
@@ -220,6 +237,8 @@ async function boot() {
     rt.clockSync = clockSync;
     rt.presence = presence;
     if (avatars) avatars.setLocalId(room.playerId);
+    // Register presence with the room so Room.leave() can tidy the heartbeat.
+    if (room.attachPresence) room.attachPresence(presence);
     syncGlobals();
 
     // Room lobby view.
@@ -229,10 +248,12 @@ async function boot() {
       onLeave: () => { try { room.leave(); } catch (e) {} window.location.reload(); },
     });
 
-    // Presence — player list drives both the lobby list and the avatars.
+    // Presence — player list drives the lobby list, the avatars, and (host) the
+    // in-performance players drawer.
     presence.onPlayers((players) => {
       lobby.updatePlayers(players);
       if (avatars) avatars.sync(players);
+      if (rt.hostPanel) rt.hostPanel.updatePlayers(players);
       if (isHost) {
         const all = players.length > 0 && players.every((p) => p.ready);
         lobby.setStartEnabled(all);
@@ -262,9 +283,75 @@ async function boot() {
     // Clock sync engine: bind transport replication (host) / application (guest).
     room.attachClock(clock, clockSync);
 
-    // Transport UI: host interactive, guest display-only. Shown in-hall.
-    rt.transportUI = new TransportUI(clock, { role: isHost ? 'host' : 'guest' });
-    transportEl.classList.remove('hidden');
+    // ---- Phase 4 transport UI: host deck OR guest bar ----
+    if (isHost) {
+      // Pending A-B loop endpoints held locally until both are valid.
+      let pendingA = 0;
+      let pendingB = null;
+
+      const cbs = {
+        onLighting: (p) => {
+          if (lighting && lighting.applyPreset) lighting.applyPreset(p);
+          if (room.setLightingPreset) room.setLightingPreset(p);
+          if (rt.hostPanel) rt.hostPanel.setLightingUI(p);
+        },
+        onSetLoopA: (t) => {
+          pendingA = t;
+          if (pendingB != null && pendingB > pendingA) {
+            if (room.setAbLoop) room.setAbLoop(pendingA, pendingB);
+            rt.hostPanel.setLoopUI(pendingA, pendingB);
+          } else {
+            rt.hostPanel.setLoopUI(pendingA, pendingB); // show A flag, B stays if any
+          }
+        },
+        onSetLoopB: (t) => {
+          pendingB = t;
+          if (pendingB > pendingA) {
+            if (room.setAbLoop) room.setAbLoop(pendingA, pendingB);
+            rt.hostPanel.setLoopUI(pendingA, pendingB);
+          }
+        },
+        onClearLoop: () => {
+          pendingA = 0; pendingB = null;
+          if (room.clearAbLoop) room.clearAbLoop();
+          rt.hostPanel.setLoopUI(null, null);
+        },
+        onResetSeats: () => {
+          if (room.resetPlayersToSeats) room.resetPlayersToSeats();
+          snapToSpawn();
+        },
+        onKick: (id) => { if (room.kickPlayer) room.kickPlayer(id); },
+        onCompareToggle: () => {
+          if (!rt.compare) rt.compare = new CompareMode(clock, manifest);
+          const on = rt.compare.toggle();
+          if (rt.hostPanel) rt.hostPanel.setCompareActive(on);
+        },
+        onStop: () => { if (room.stopPerformance) room.stopPerformance(); },
+        onRestart: () => { clock.seek(0); if (!clock.playing) clock.play(); },
+      };
+
+      const panel = new HostPanel(clock, cbs, {
+        markersUrl: manifest.markers,
+        duration: manifest.duration,
+      });
+      rt.hostPanel = panel;
+      panel.setLightingUI('single-spot');
+      rt.keybinds = new Keybinds(clock, panel, cbs);
+    } else {
+      rt.guestBar = new GuestBar(clock);
+      if (room.on) {
+        room.on('lightingchange', (p) => { if (lighting && lighting.applyPreset) lighting.applyPreset(p); });
+        room.on('resetseats', () => snapToSpawn());
+        room.on('kicked', () => {
+          overlayInner.classList.add('error');
+          overlay.querySelector('.overlay-title').textContent = 'REMOVED FROM SESSION';
+          statusEl.textContent = 'You were removed from the session.';
+          overlay.classList.remove('hidden');
+          try { room.leave(); } catch (e) {}
+          setTimeout(() => window.location.reload(), 2600);
+        });
+      }
+    }
 
     // NTP-style clock calibration, then report ready once assets + sync are done.
     lobby.setStatus('Syncing clock…');
@@ -312,7 +399,7 @@ async function boot() {
   }
 
   // First-gesture autoplay hint (host only ever triggers play).
-  clock.on('autoplayblocked', () => { hintEl.textContent = 'Press Play ▶ to start'; });
+  clock.on('autoplayblocked', () => { hintEl.textContent = 'Press PLAY to start'; });
 
   // 7) Resize.
   function onResize() {

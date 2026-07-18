@@ -81,24 +81,11 @@
     <!-- Walk hint -->
     <div id="walk-hint" class="walk-hint hidden">Click to walk — WASD + mouse</div>
 
-    <!-- Transport bar shell -->
-    <div id="transport" class="transport hidden">
-      <button id="play-btn" class="play-btn" aria-label="Play / Pause" title="Play / Pause (Space)">▶</button>
-      <div class="time-display"><span id="time-current">0:00</span> / <span id="time-total">0:00</span></div>
-      <input id="seek-bar" class="seek-bar" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
-      <label class="rate-control">
-        <span class="rate-label">Rate</span>
-        <select id="rate-select" aria-label="Playback rate">
-          <option value="0.25">0.25×</option>
-          <option value="0.5">0.5×</option>
-          <option value="0.75">0.75×</option>
-          <option value="1" selected>1×</option>
-          <option value="1.25">1.25×</option>
-          <option value="1.5">1.5×</option>
-          <option value="2">2×</option>
-        </select>
-      </label>
-    </div>
+    <!-- Host panel deck (host only; inner DOM built by HostPanel.js) -->
+    <div id="host-panel" class="hidden"></div>
+
+    <!-- Guest bar (guests only; inner DOM built by GuestBar.js) -->
+    <div id="guest-bar" class="hidden"></div>
   </div>
 
   <script type="module" src="./js/main.js"></script>

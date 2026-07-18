@@ -66,6 +66,10 @@ export class PlaybackClock {
 
   get playing() { return this._state === 'playing'; }
 
+  // Per-client LOCAL mute. Networked mute is retired (Phase 4): mute never
+  // crosses the wire; the clock stays the sole <audio> owner so this lives here.
+  get muted() { return this._audio.muted; }
+
   // ---------------- control surface (UI now, netcode later) ----------------
   async play() {
     try {
@@ -96,6 +100,14 @@ export class PlaybackClock {
   setRate(r) {
     const clamped = Math.min(Math.max(Number(r) || 1, 0.25), 2);
     this._audio.playbackRate = clamped;
+  }
+
+  /** Local (per-client) mute toggle. Emits 'mutechange' with the new boolean. */
+  setMuted(bool) {
+    const next = !!bool;
+    if (this._audio.muted === next) return;
+    this._audio.muted = next;
+    this._emit('mutechange', next);
   }
 
   // ---------------- events ----------------
