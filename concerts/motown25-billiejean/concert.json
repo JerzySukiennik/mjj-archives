@@ -4,7 +4,7 @@
   "audio": "billiejean.m4a",
   "model": "mj.glb",
   "motion": "billiejean.motion.json",
-  "cameraTrack": null,
+  "cameraTrack": "camera-track.json",
   "markers": "markers.json",
   "referenceVideo": "reference.mp4",
   "hall": "pasadena-civic",
