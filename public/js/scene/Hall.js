@@ -273,7 +273,7 @@ export function createHall(scene, opts = {}) {
 
   // ---- Empty audience — raked rows via InstancedMesh ---------------------
   // Two instanced parts (seat cushion + seat back) => 2 instanced draw calls total.
-  const ROWS = 16;
+  const ROWS = opts.seatRows ?? 16;   // build-time quality knob (low=10, med/high=16)
   const SEATS_PER_ROW = 34;
   const SEAT_GAP_X = 0.62;
   const ROW_GAP_Z = 1.5;

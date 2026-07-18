@@ -126,7 +126,7 @@ function remapBody(root, noiseTex) {
 
   // Ankle height: from foot bone bind Y (avg of left/right if present).
   const ankleY = averageBoneY(boneNames, boneBindPos, [/LeftFoot$/, /RightFoot$/], minY);
-  const sockTopY = ankleY + 0.14 * unitsPerM; // socks below this on the calf
+  const sockTopY = ankleY + 0.09 * unitsPerM; // socks below this on the calf (thin white band)
 
   // Front (+/-z) direction: toe is forward of the foot.
   const footZ = boneZ(boneNames, boneBindPos, /LeftFoot$/);
@@ -350,12 +350,13 @@ function attachFedora(root) {
   const s = new THREE.Vector3();
   headBone.getWorldScale(s);
   const inv = (s.y && isFinite(s.y) && s.y !== 0) ? (1 / s.y) : 1;
-  hat.scale.setScalar(inv);
+  hat.scale.setScalar(inv * 1.15); // +15% so the brim caps the crown at close range
 
   // Sit on the crown of the head: up along the (compensated) head-local +Y,
   // slight forward tilt (~6 deg). Head-local axes carry the armature scale, so
-  // the local offset is also expressed in compensated units.
-  hat.position.set(0, 0.11 * inv, 0.01 * inv);
+  // the local offset is also expressed in compensated units. Lowered slightly to
+  // keep the enlarged brim seated on the crown (no floating gap at close-up).
+  hat.position.set(0, 0.10 * inv, 0.01 * inv);
   hat.rotation.x = -0.105; // ~6 deg forward tilt
 
   headBone.add(hat);

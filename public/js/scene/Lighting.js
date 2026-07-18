@@ -9,7 +9,7 @@ import * as THREE from 'three';
 export function createLighting(scene, stageAnchor, opts = {}) {
   const {
     spotColor = 0xfff2d6,     // warm white
-    spotIntensity = 90,       // physically-ish; tuned for MeshStandardMaterial
+    spotIntensity = 130,      // physically-ish; tuned for MeshStandardMaterial (raised for performer visibility)
     fill = true,
     fog = true,
   } = opts;
@@ -48,6 +48,7 @@ export function createLighting(scene, stageAnchor, opts = {}) {
   added.push(hemi);
 
   // ---- Faint warm fill on the proscenium so the arch isn't pure black ----
+  let performerFill = null;
   if (fill) {
     const proscFill = new THREE.PointLight(0x9a6a3a, 6, 30, 2.0);
     proscFill.position.set(0, aim.y + 9, aim.z - 2);
@@ -55,8 +56,16 @@ export function createLighting(scene, stageAnchor, opts = {}) {
     scene.add(proscFill);
     added.push(proscFill);
 
-    // Tiny cool back/rim to separate performer from back curtain.
-    const rim = new THREE.DirectionalLight(0x445577, 0.25);
+    // Dedicated warm fill ON THE PERFORMER so MJ reads clearly under the single
+    // spot — tight distance so it doesn't spill into the dark house.
+    performerFill = new THREE.PointLight(0xffe2b8, 10, 18, 1.8);
+    performerFill.position.set(aim.x, aim.y + 4, aim.z + 7);
+    performerFill.castShadow = false;
+    scene.add(performerFill);
+    added.push(performerFill);
+
+    // Cool back/rim to separate performer from back curtain (boosted for silhouette).
+    const rim = new THREE.DirectionalLight(0x445577, 0.55);
     rim.position.set(0, aim.y + 8, aim.z - 10);
     rim.castShadow = false;
     scene.add(rim);
@@ -101,6 +110,7 @@ export function createLighting(scene, stageAnchor, opts = {}) {
     spotAngle: spot.angle,
     hemi: hemi.intensity,
     prosc: proscFillRef ? proscFillRef.intensity : 0,
+    perf: performerFill ? performerFill.intensity : 0,
     rim: rimRef ? rimRef.intensity : 0,
   };
 
@@ -116,6 +126,7 @@ export function createLighting(scene, stageAnchor, opts = {}) {
         spot.angle = defaults.spotAngle;
         hemi.intensity = defaults.hemi;
         if (proscFillRef) proscFillRef.intensity = defaults.prosc;
+        if (performerFill) performerFill.intensity = defaults.perf;
         if (rimRef) rimRef.intensity = defaults.rim;
         washL.intensity = 0;
         washR.intensity = 0;
@@ -125,6 +136,7 @@ export function createLighting(scene, stageAnchor, opts = {}) {
         spot.angle = Math.PI / 6;
         hemi.intensity = 0.6;
         if (proscFillRef) proscFillRef.intensity = 14;
+        if (performerFill) performerFill.intensity = 6; // modest under the wide wash
         if (rimRef) rimRef.intensity = 0.6;
         washL.intensity = 35;
         washR.intensity = 35;
@@ -133,6 +145,7 @@ export function createLighting(scene, stageAnchor, opts = {}) {
         spot.intensity = 0;
         hemi.intensity = 0.02;
         if (proscFillRef) proscFillRef.intensity = 0;
+        if (performerFill) performerFill.intensity = 0;
         if (rimRef) rimRef.intensity = 0;
         washL.intensity = 0;
         washR.intensity = 0;
@@ -149,6 +162,19 @@ export function createLighting(scene, stageAnchor, opts = {}) {
     scene.fog = new THREE.FogExp2(0x05040a, 0.018);
   }
 
+  /**
+   * Resize the (single) shadow map for the quality-preset system. Disposes the
+   * existing GPU map so three.js re-allocates it at the new resolution.
+   * @param {number} px - square shadow map edge (512 / 1024 / 2048).
+   */
+  function setShadowMapSize(px) {
+    spot.shadow.mapSize.set(px, px);
+    if (spot.shadow.map) {
+      spot.shadow.map.dispose();
+      spot.shadow.map = null;
+    }
+  }
+
   function dispose() {
     for (const o of added) {
       scene.remove(o);
@@ -159,5 +185,5 @@ export function createLighting(scene, stageAnchor, opts = {}) {
     if (fog) scene.fog = prevFog;
   }
 
-  return { dispose, spot, applyPreset };
+  return { dispose, spot, applyPreset, setShadowMapSize };
 }
