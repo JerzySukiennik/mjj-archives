@@ -22,8 +22,18 @@
 
 import * as THREE from 'three';
 
-const EYE_HEIGHT = 1.7;   // fixed camera height (metres)
+const EYE_HEIGHT = 1.7;   // camera height above the local floor (metres)
 const SPEED = 3.0;        // walk speed (m/s)
+// Stage geometry (must match scene/Hall.js): front edge at z=0, riser 1.2 m.
+// Walking up is a smooth "stair" blend over the first 1.5 m past the edge.
+const STAGE_H = 1.2;
+const STAGE_STEP = 1.5;
+function floorHeightAt(z) {
+  if (z >= 0) return 0;                       // house floor
+  if (z <= -STAGE_STEP) return STAGE_H;       // on the stage
+  const t = -z / STAGE_STEP;                  // 0..1 across the step zone
+  return STAGE_H * t * t * (3 - 2 * t);       // smoothstep ramp
+}
 const PITCH_LIMIT = THREE.MathUtils.degToRad(80);
 const LOOK_SENS = 0.0022; // radians per pixel of mouse movement
 
@@ -128,7 +138,7 @@ export class WalkControls {
       if (this._pos.z < b.minZ) this._pos.z = b.minZ;
       else if (this._pos.z > b.maxZ) this._pos.z = b.maxZ;
     }
-    this._pos.y = EYE_HEIGHT;
+    this._pos.y = floorHeightAt(this._pos.z) + EYE_HEIGHT;
 
     this.camera.position.copy(this._pos);
     this._applyOrientation();

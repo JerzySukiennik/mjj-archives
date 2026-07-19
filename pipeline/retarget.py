@@ -92,6 +92,34 @@ def main():
 
     GOOD = conf > 0.5
 
+    # ---- camera-shot gating (v9) ----
+    # MediaPipe reports HIGH confidence on close-up shots even though the lower
+    # body is out of frame and the legs are hallucinated -> tangled full-body
+    # poses that pass the conf gate. The broadcast cut list knows the framing:
+    # trust full-body pose only in medium/wide/side shots; close-ups and
+    # crowd/establishing shots are forced into the donor-fill path.
+    CAM = os.path.join(OUTDIR, "camera-track.json")
+    try:
+        shots = json.load(open(CAM))["shots"]
+        UNTRUSTED = {"close-face", "close-feet", "establishing"}
+        n_shot = 0
+        for k, sh in enumerate(shots):
+            t0 = float(sh["t"])
+            t1 = float(shots[k+1]["t"]) if k+1 < len(shots) else dur
+            if sh.get("type") in UNTRUSTED:
+                a, b = int(t0*fps), min(F, int(t1*fps)+1)
+                # never demote the moonwalk window (217-228 s): the footwork
+                # there is the showpiece and the mocap is visibly readable even
+                # in tighter framings — donor legs would ruin it.
+                MW_A, MW_B = int(217*fps), int(228*fps)
+                for i2 in range(a, b):
+                    if MW_A <= i2 < MW_B: continue
+                    if GOOD[i2]: n_shot += 1
+                    GOOD[i2] = False
+        print(f"camera-shot gating: {n_shot} conf-passing frames in close/establishing shots demoted to donor-fill")
+    except FileNotFoundError:
+        print("camera-shot gating: camera-track.json not found, skipped")
+
     # ---- temporal outlier rejection ----
     # Reject "good" frames whose core world landmarks jump implausibly vs the last
     # accepted frame (wide/crowd shots where MediaPipe grabs a wrong or mangled body).
@@ -237,6 +265,7 @@ def main():
     # =====================================================================
     XFADE = int(0.5*fps)
     INTRO_END_F = int(16.5*fps)      # spoken/vamp intro: MJ stands at the mic
+    SPEECH_END_F = int(88.0*fps)     # whole spoken section: at the mic until the bass hits (~89.4)
     CALM_THR = 70.0                  # deg/frame summed over 16 bones (song median ~65)
     def pose_dist(ia, ib):
         d = 0.0
@@ -301,7 +330,7 @@ def main():
             ce = min(cs + chunk_max, b)
             CL = ce - cs
             don = best_donor(CL, prv if ci == 0 else prv, nxt, exclude_start=prev_donor,
-                             calm_only=(a < INTRO_END_F))
+                             calm_only=(a < SPEECH_END_F))
             if don is None:                                 # pathological; keep slerp
                 for bone in OUTPUT_BONES:
                     fill[bone][cs-a:ce-a] = quats[bone][cs:ce]
@@ -334,22 +363,58 @@ def main():
         n_graph += 1
     print(f"motion-graph fill: {n_graph}/{len(bad_spans)} spans donor-filled (xfade {XFADE} fr)")
 
+    # ---- SPEECH-SECTION POSE ANCHOR (v9): through 0-88 s the real MJ stands
+    # upright at the mic. Mocap there is a mix of decent frames, mangled
+    # medium-shot detections and donor fills — rate caps alone just freeze bad
+    # silhouettes. Extract a canonical upright pose from a verified-good window
+    # (t=2..6 s matches the video: standing at the mic) and pull every
+    # speech-section frame toward it. 40% of the mocap's own motion survives as
+    # natural life; spine/neck are pinned harder to kill the hunch. The blend
+    # ramps out over the last 1.5 s so the song section takes over seamlessly.
+    RAMP = int(1.5*fps)
+    # pick the single most-UPRIGHT calm good frame in the whole take as the
+    # anchor: spine+neck local rotation closest to the bind pose (straight back
+    # in the Mixamo T-pose), i.e. minimal hunch. A fixed time window can't be
+    # trusted — the early mocap is itself bent.
+    def bind_dev(i):
+        dev = 0.0
+        for b in ("mixamorig:Spine", "mixamorig:Neck"):
+            dev += 1.0 - abs(float(np.dot(quats[b][i], localBind[b] / np.linalg.norm(localBind[b]))))
+        return dev
+    cand = [i for i in range(F) if GOOD[i] and i < F-1 and not np.isnan(raw_rate[i]) and raw_rate[i] < CALM_THR]
+    if not cand: cand = [i for i in range(F) if GOOD[i]]
+    i_star = min(cand, key=bind_dev)
+    print(f"pose anchor frame: t={i_star/fps:.2f}s (bind-dev {bind_dev(i_star):.4f})")
+    anchor = {b: quats[b][i_star].copy() for b in OUTPUT_BONES}
+    STRONG = {"mixamorig:Spine", "mixamorig:Neck"}
+    for b in OUTPUT_BONES:
+        w0 = 0.75 if b in STRONG else 0.6
+        q = quats[b]
+        for i in range(min(SPEECH_END_F, F)):
+            w = w0
+            if i > SPEECH_END_F - RAMP:
+                w = w0 * (SPEECH_END_F - i) / RAMP     # ramp out into the song
+            q[i] = np.asarray(Q.slerp(q[i], anchor[b], w), np.float32)
+    print(f"speech-section pose anchor: frames 0-{SPEECH_END_F} pulled to upright mic pose (w=0.6/0.75)")
+
     # ---- INTRO limb angular-velocity soft cap (0-16.5 s): MJ stands at the
     # mic and talks/poses; low-conf mocap garbage + energetic content must not
     # survive as wild swings. Sequential per-bone rate limiter — small natural
     # gestures (<5 deg/frame/bone = 150 deg/s) pass through untouched.
-    CAP = np.radians(5.0)
+    # Two regimes: hard cap in the strict intro (0-16.5s), moderate cap for the
+    # rest of the spoken section (16.5-88s) — gestures survive, flails don't.
     n_capped = 0
     for b in OUTPUT_BONES:
         q = quats[b]
-        for i in range(1, min(INTRO_END_F, F)):
+        for i in range(1, min(SPEECH_END_F, F)):
+            cap = np.radians(5.0) if i < INTRO_END_F else np.radians(8.0)
             d = float(np.dot(q[i], q[i-1]))
             qq = q[i] if d >= 0 else -q[i]
             ang = 2*np.arccos(min(1.0, abs(d)))
-            if ang > CAP:
-                q[i] = np.asarray(Q.slerp(q[i-1], qq, CAP/ang), np.float32)
+            if ang > cap:
+                q[i] = np.asarray(Q.slerp(q[i-1], qq, cap/ang), np.float32)
                 n_capped += 1
-    print(f"intro rate cap: {n_capped} bone-frames limited to 5 deg/frame")
+    print(f"speech-section rate cap: {n_capped} bone-frames limited (5/8 deg/frame)")
 
     # keep the raw temp stores (legSpan in [,0], normalized hip-x in [,2])
     nxArr = hips_pos[:,2].copy()
@@ -531,12 +596,33 @@ def main():
         fmin = min(W[b][1,3] for b in FEET)
         fRel[i] = (fmin - hy) * 0.01       # native cm -> metres
     posScale = float(nodes["mixamorig:Hips"]["localTranslation"][1] / restY)  # bindY/restY
-    z_b = -(restY + fRel) / (0.01 * posScale)
-    z_b = smooth(z_b, 9)                    # light: kill jitter, keep real crouch/toe-stand
+    M2U = 0.01 * posScale                   # world metres per baked unit
+    # fRel is a per-frame FK estimate and jitters with pose noise/donor blends;
+    # every downstream signal (z_b AND the floor clamp) must use a smoothed
+    # version, otherwise the floor clamp re-injects the very spikes the rate
+    # limiter removes (np.maximum against a jittery z_floor = unlimited vz).
+    fRel = savgol_filter(fRel, 11, 2)
+    z_b = -(restY + fRel) / M2U
     # clamp hips vertical excursion to a physical range (rest grounding is ~z0);
     # blocks a bad-frame pose from slamming the hips through the floor.
     z0 = float(np.median(z_b))
-    z_b = np.clip(z_b, z0 - 0.55/(0.01*posScale), z0 + 0.30/(0.01*posScale))
+    z_b = np.clip(z_b, z0 - 0.55/M2U, z0 + 0.30/M2U)
+    # ---- VERTICAL PHYSICS (v9): the per-frame contact solve has no temporal
+    # constraint, so pose jitter + donor blends made the hips bounce at up to
+    # 4 m/s ("flying"). Order: smooth (0.4 s), then rate-limit |vz|<=0.8 m/s as
+    # the final pass, then a floor-clamp relaxation — feet must not sink, so
+    # where the limited Z would push the lowest foot below -2 cm we raise the
+    # hips just enough (landing-style corrections may briefly exceed 0.8 m/s
+    # but stay well under the 1.5 m/s gate).
+    z_b = smooth(z_b, 13)                   # ~0.4 s
+    VZ = (0.8/fps) / M2U                    # baked units per frame
+    z_floor = (-0.02 - restY - fRel) / M2U  # min z so lowest foot >= -2 cm (fRel smoothed)
+    for _pass in range(3):
+        z_b = np.maximum(z_b, z_floor)      # keep feet at/above the floor
+        for i in range(1, F):               # rate limit LAST so the output is physical
+            d = z_b[i] - z_b[i-1]
+            if d > VZ:   z_b[i] = z_b[i-1] + VZ
+            elif d < -VZ: z_b[i] = z_b[i-1] - VZ
 
     # =====================================================================
     # DEFECT 4 — LATERAL STAGE TRAVEL from the normalized hip-x trajectory.
@@ -589,7 +675,7 @@ def main():
     # INTRO: root fully planted at the mic (video ground truth: he is already
     # at the mic at t=0.5 and stands there through the spoken intro). Constant
     # equal to the first post-intro value => seamless at the boundary.
-    lat[:min(INTRO_END_F, F)] = lat[min(INTRO_END_F, F-1)]
+    lat[:min(SPEECH_END_F, F)] = lat[min(SPEECH_END_F, F-1)]
     # camera sits at +Z looking -Z => screen-right == world +X; normalized-x
     # grows to screen-right, so the gain is POSITIVE.
     lat = (lat - np.median(lat)) * 12.0              # normalized drift -> metres
@@ -633,9 +719,7 @@ def main():
 
     hips_pos[:,0] = x_b                               # already rate-limited: DO NOT re-smooth
     hips_pos[:,1] = restY                             # depth channel: hold rest (drives posScale)
-    hips_pos[:,2] = z_b
-    if F>=9:
-        for c in (1,2): hips_pos[:,c] = savgol_filter(hips_pos[:,c], 7, 2)
+    hips_pos[:,2] = z_b                               # already smoothed+rate-limited: DO NOT re-smooth
 
     # ---- unusable spans (conf<0.5 contiguous > 0.5s) ----
     spans=[]

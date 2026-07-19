@@ -34,7 +34,9 @@ const vmod = (p) => import(/* @vite-ignore */ `${p}?v=${V}`);
 const MANIFEST_URL = './concerts/motown25-billiejean/concert.json';
 
 // Seats-area AABB the WalkControls clamp to (matches Task S spec).
-const WALK_BOUNDS = { minX: -9, maxX: 9, minZ: 4, maxZ: 16, eyeY: 1.7 };
+// Walkable area now includes the stage itself (front z=0, depth 12, riser 1.2m):
+// players can climb on via the smooth step handled in WalkControls.
+const WALK_BOUNDS = { minX: -9, maxX: 9, minZ: -11, maxZ: 16, eyeY: 1.7 };
 const SPAWN = { x: 0, y: WALK_BOUNDS.eyeY, z: 12 };
 
 // DOM refs.
