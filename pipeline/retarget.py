@@ -236,11 +236,25 @@ def main():
     # Root position/orientation are NOT taken from donors (handled separately).
     # =====================================================================
     XFADE = int(0.5*fps)
+    INTRO_END_F = int(16.5*fps)      # spoken/vamp intro: MJ stands at the mic
+    CALM_THR = 70.0                  # deg/frame summed over 16 bones (song median ~65)
     def pose_dist(ia, ib):
         d = 0.0
         for b in OUTPUT_BONES:
             d += 1.0 - abs(float(np.dot(quats[b][ia], quats[b][ib])))
         return d
+    # per-frame summed bone angular speed on GOOD frame pairs (for calm-donor test)
+    raw_rate = np.full(F-1, np.nan)
+    for b in OUTPUT_BONES:
+        q = quats[b]
+        dd = np.abs(np.einsum('ij,ij->i', q[1:], q[:-1]))
+        a = 2*np.degrees(np.arccos(np.clip(dd, -1, 1)))
+        valid = GOOD[1:] & GOOD[:-1]
+        raw_rate[valid] = np.where(np.isnan(raw_rate[valid]), a[valid], raw_rate[valid]+a[valid])
+    def window_calm(s, L):
+        seg = raw_rate[s:s+L-1]
+        v = seg[~np.isnan(seg)]
+        return len(v) > 0.5*(L-1) and float(np.mean(v)) < CALM_THR
     # good runs (start,len) for donor search
     runs = []
     i = 0
@@ -251,15 +265,19 @@ def main():
             runs.append((i, j-i)); i = j
         else: i += 1
     max_run = max(l for _, l in runs)
-    def best_donor(L, pose_a, pose_b, exclude_start=None):
-        """Best good window of length L: min pose distance to boundary frames."""
+    def best_donor(L, pose_a, pose_b, exclude_start=None, calm_only=False):
+        """Best good window of length L: min pose distance to boundary frames.
+        calm_only restricts to low-angular-velocity windows (intro gap fill)."""
         best = None; best_c = 1e18
         for (s, l) in runs:
             if l < L: continue
             for st in range(s, s+l-L+1, 4):
                 if exclude_start is not None and abs(st-exclude_start) < L//2: continue
+                if calm_only and not window_calm(st, L): continue
                 c = pose_dist(st, pose_a) + pose_dist(st+L-1, pose_b)
                 if c < best_c: best_c = c; best = st
+        if best is None and calm_only:                      # relax rather than fail
+            return best_donor(L, pose_a, pose_b, exclude_start, calm_only=False)
         return best
     bad_spans = []
     i = 0
@@ -282,7 +300,8 @@ def main():
         for ci, cs in enumerate(starts):
             ce = min(cs + chunk_max, b)
             CL = ce - cs
-            don = best_donor(CL, prv if ci == 0 else prv, nxt, exclude_start=prev_donor)
+            don = best_donor(CL, prv if ci == 0 else prv, nxt, exclude_start=prev_donor,
+                             calm_only=(a < INTRO_END_F))
             if don is None:                                 # pathological; keep slerp
                 for bone in OUTPUT_BONES:
                     fill[bone][cs-a:ce-a] = quats[bone][cs:ce]
@@ -314,6 +333,23 @@ def main():
                 quats[bone][a+k] = Q.qnorm(np.asarray(q, float))
         n_graph += 1
     print(f"motion-graph fill: {n_graph}/{len(bad_spans)} spans donor-filled (xfade {XFADE} fr)")
+
+    # ---- INTRO limb angular-velocity soft cap (0-16.5 s): MJ stands at the
+    # mic and talks/poses; low-conf mocap garbage + energetic content must not
+    # survive as wild swings. Sequential per-bone rate limiter — small natural
+    # gestures (<5 deg/frame/bone = 150 deg/s) pass through untouched.
+    CAP = np.radians(5.0)
+    n_capped = 0
+    for b in OUTPUT_BONES:
+        q = quats[b]
+        for i in range(1, min(INTRO_END_F, F)):
+            d = float(np.dot(q[i], q[i-1]))
+            qq = q[i] if d >= 0 else -q[i]
+            ang = 2*np.arccos(min(1.0, abs(d)))
+            if ang > CAP:
+                q[i] = np.asarray(Q.slerp(q[i-1], qq, CAP/ang), np.float32)
+                n_capped += 1
+    print(f"intro rate cap: {n_capped} bone-frames limited to 5 deg/frame")
 
     # keep the raw temp stores (legSpan in [,0], normalized hip-x in [,2])
     nxArr = hips_pos[:,2].copy()
@@ -550,6 +586,10 @@ def main():
     from scipy.signal import medfilt
     lat = medfilt(lat, 45)                           # 1.5 s: kills cut-jump wobble
     lat = smooth(lat, 25)                            # ~0.8 s robust smoothing
+    # INTRO: root fully planted at the mic (video ground truth: he is already
+    # at the mic at t=0.5 and stands there through the spoken intro). Constant
+    # equal to the first post-intro value => seamless at the boundary.
+    lat[:min(INTRO_END_F, F)] = lat[min(INTRO_END_F, F-1)]
     # camera sits at +Z looking -Z => screen-right == world +X; normalized-x
     # grows to screen-right, so the gain is POSITIVE.
     lat = (lat - np.median(lat)) * 12.0              # normalized drift -> metres
